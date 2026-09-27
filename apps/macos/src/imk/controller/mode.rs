@@ -9,35 +9,34 @@ impl QingjianInputController {
     ///
     /// 一律返回 false：修饰键本身要交给应用，`⇧ + 字母`、`⌘ + Tab` 照常，切换模式也不改变这一键的归属。
     pub(super) fn handle_flags(&self, event: &NSEvent, client: TextClient<'_>) -> bool {
-        match modifiers::switch_key_of(event.keyCode()) {
-            Some(key) => {
-                let flipped = host::with(|h| {
-                    if modifiers::switch_key_down(event, key) {
-                        h.mode.key_down(Some(key), event.isARepeat());
-                        return false;
-                    }
-                    h.mode.key_up(Some(key))
-                })
-                .unwrap_or(false);
-                if flipped {
-                    self.switch_language(client);
-                }
-            }
-            // 别的修饰键（⌘ / ⌥ / Caps Lock）按下：作废正按着的切换键，`⌘ + Shift` 之后抬起 Shift 不算单击。
-            // 抬起不用管：按下那一下已经作废过了。
-            None => {
-                host::with(|h| h.mode.key_down(None, false));
-            }
+        let flags = event.modifierFlags();
+        let flipped = host::with(|h| {
+            let flipped = h.mode.modifier_event(modifiers::modifier_event(event));
+            // 键位的开合是自己记的（聚合标志分不清左右两只），记漏了就照聚合标志清掉：
+            // 输入法可能在按住 Shift 的时候才被激活。必须在判定之后对账，否则抬起会被当成按下。
+            h.mode.resync(
+                flags.contains(NSEventModifierFlags::Shift),
+                flags.contains(NSEventModifierFlags::Control),
+            );
+            flipped
+        })
+        .unwrap_or(false);
+        if flipped {
+            self.switch_language(client);
         }
         false
     }
 
-    /// 翻了中 / 英模式：手上没打完的拼音先原样上屏（留着会变成英文模式里的幽灵文本），
-    /// 候选窗口与在飞的联想起收掉，状态项立刻跟上。
+    /// 翻了中 / 英模式：把没打完的东西收干净，不带进新模式，也不留幽灵状态。
+    ///
+    /// 手上没打完的拼音先原样上屏（留着会变成英文模式里的幽灵文本）；翻译窗口开着就整个放弃
+    /// （`end_translation` 顺带停联想、清会话、收窗口，切完模式再按回车不该替换选区）；
+    /// 状态项立刻跟上。
     fn switch_language(&self, client: TextClient<'_>) {
         self.commit_raw(client);
         let english = host::with(|h| {
             h.engine.set_english_mode(false);
+            h.end_translation();
             h.cancel_prediction();
             h.window.hide();
             h.indicator.update(h.mode.english());

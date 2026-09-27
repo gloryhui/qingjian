@@ -553,7 +553,53 @@ impl Config {
         write_file(path, TEMPLATE)?;
         Ok(true)
     }
+
+    /// macOS 的一次性迁移：把老配置里的英文模式改成纯直通。
+    ///
+    /// 纯直通（英文模式整个把按键交给应用，与系统 ABC 键盘一样）是 macOS 的新缺省体验，而老配置写着
+    /// `english_candidates = true`——只改模板救不了已经装好的机器，它们升级后仍旧组英文句。所以第一次
+    /// 启动时改这一处：值为 `true` 或者干脆没写的，原地改成 `false`（注释与顺序照 [`Self::set_value`]
+    /// 保留）。同目录留一个印记文件，**只此一次**：之后用户在偏好设置里自己打开的 `true` 不再被动。
+    /// 返回是否真的改了配置文件。
+    pub fn migrate_macos_pure_english(path: &Path) -> Result<bool, ConfigError> {
+        let stamp = path.with_file_name(PURE_ENGLISH_STAMP);
+        if !path.is_file() || stamp.exists() {
+            return Ok(false);
+        }
+        let source = std::fs::read_to_string(path).map_err(|source| ConfigError::Read {
+            path: path.to_owned(),
+            source,
+        })?;
+        let document: DocumentMut = source.parse().map_err(|source| ConfigError::Edit {
+            path: path.to_owned(),
+            source: Box::new(source),
+        })?;
+        let current = document
+            .get("general")
+            .and_then(|general| general.get("english_candidates"))
+            .and_then(|value| value.as_bool());
+        if current == Some(false) {
+            return Ok(false);
+        }
+        // 认得动这份配置才落印记：印记一写就再也不迁，坏配置修好了也不该错过这次改动
+        std::fs::write(&stamp, PURE_ENGLISH_STAMP_NOTE).map_err(|source| ConfigError::Write {
+            path: stamp.clone(),
+            source,
+        })?;
+        Self::set_value(path, "general", "english_candidates", false)?;
+        Ok(true)
+    }
 }
+
+/// 一次性迁移的印记文件名，写在配置同目录（macOS）。删掉它会再迁一次。
+const PURE_ENGLISH_STAMP: &str = ".pure-english-migrated";
+
+/// 印记文件的内容：写明这是干什么的，用户看到它才知道删掉的后果。
+const PURE_ENGLISH_STAMP_NOTE: &str = concat!(
+    "青简写过的一次性迁移记录：配置文件里的 [general] english_candidates 被改成 false，",
+    "英文模式从此是纯直通（按键整个交给应用，与系统 ABC 键盘一样）。\n",
+    "在偏好设置里重新打开「英文模式也给候选」不会再被改回去。删掉这个文件会再迁移一次。\n",
+);
 
 /// 原子写配置文件；数据目录还没有就先建（新账户第一次打开设置时输入法可能还没跑过）。
 fn write_file(path: &Path, text: &str) -> Result<(), ConfigError> {
@@ -659,6 +705,74 @@ mod tests {
         let config = Config::load(&path).unwrap();
         assert!(config.fuzzy.z_zh && config.fuzzy.n_l && config.predict.enabled);
         let _ = std::fs::remove_file(&path);
+    }
+
+    /// 老 macOS 配置升级后第一次启动就变成纯直通：`english_candidates = true` 改成 `false`，
+    /// 注释与其余内容原样留着；印记文件保证用户后来自己打开的 `true` 不再被动。
+    #[test]
+    fn pure_english_migration_flips_old_configs_once() {
+        let dir = std::env::temp_dir().join("qingjian-pure-english-migrate-test");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("config.toml");
+        std::fs::write(
+            &path,
+            "[general]\n# 英文模式也给候选\nenglish_candidates = true\npage_size = 9\n",
+        )
+        .unwrap();
+        assert!(Config::migrate_macos_pure_english(&path).unwrap());
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(
+            text.contains("# 英文模式也给候选\nenglish_candidates = false\npage_size = 9\n"),
+            "{text}"
+        );
+        assert!(!Config::load(&path).unwrap().general.english_candidates);
+
+        Config::set_bool(&path, "general", "english_candidates", true).unwrap();
+        assert!(!Config::migrate_macos_pure_english(&path).unwrap());
+        assert!(Config::load(&path).unwrap().general.english_candidates);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// 没写这一项的老配置补上 `false`（缺省是开，纯直过得写下来）；已经是 `false` 的连文件都不碰。
+    #[test]
+    fn pure_english_migration_adds_a_missing_key_and_skips_a_pure_config() {
+        let dir = std::env::temp_dir().join("qingjian-pure-english-add-test");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("config.toml");
+        std::fs::write(&path, "[general]\npage_size = 9\n").unwrap();
+        assert!(Config::migrate_macos_pure_english(&path).unwrap());
+        assert!(!Config::load(&path).unwrap().general.english_candidates);
+
+        std::fs::write(&path, "[general]\nenglish_candidates = false\n").unwrap();
+        let _ = std::fs::remove_file(path.with_file_name(PURE_ENGLISH_STAMP));
+        assert!(!Config::migrate_macos_pure_english(&path).unwrap());
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            "[general]\nenglish_candidates = false\n"
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// 配置文件读不了（语法坏了）时既不碰配置也不落印记：修好之后升级仍然该迁这一次。
+    #[test]
+    fn pure_english_migration_refuses_a_broken_config() {
+        let dir = std::env::temp_dir().join("qingjian-pure-english-broken-test");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("config.toml");
+        std::fs::write(&path, "[general\nenglish_candidates = true\n").unwrap();
+        assert!(matches!(
+            Config::migrate_macos_pure_english(&path),
+            Err(ConfigError::Edit { .. })
+        ));
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            "[general\nenglish_candidates = true\n"
+        );
+        assert!(!path.with_file_name(PURE_ENGLISH_STAMP).exists());
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

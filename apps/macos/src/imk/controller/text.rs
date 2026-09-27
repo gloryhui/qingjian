@@ -2,10 +2,23 @@
 
 use super::*;
 
+/// 这个大写字母是不是**按着 Shift** 打的（只有它归 `[general] shift_letter` 管）。
+///
+/// Caps Lock 亮着送来的大写只是大写锁定：勾了 `shift_letter = "compose"` 就把它收进中文缓冲区，
+/// 等于让 ⇪ 决定要不要组句——那键只管大小写。这种大写整个交给应用，一个字都不进青简。
+fn shifted_uppercase(c: char, modifiers: Modifiers) -> bool {
+    c.is_ascii_uppercase() && modifiers.shift
+}
+
 impl QingjianInputController {
-    pub(super) fn handle_text(&self, text: &str, client: TextClient<'_>) -> bool {
+    /// `modifiers` 是这一次按键按着的修饰键：只有真正按着 Shift 的大写才走 `shift_letter` 那条策略。
+    pub(super) fn handle_text(
+        &self,
+        text: &str,
+        client: TextClient<'_>,
+        modifiers: Modifiers,
+    ) -> bool {
         tracing::debug!(%text, "inputText");
-        self.note_application(&client);
         let mut composing = host::with(|h| !h.engine.composition().is_empty()).unwrap_or(false);
         // 中英模式是输入法自己记的那一份（单击 Shift 翻），Caps Lock 只管大小写
         let english = host::with(|h| h.mode.english()).unwrap_or(false);
@@ -155,12 +168,15 @@ impl QingjianInputController {
             if c == ' ' {
                 return true;
             }
-            return self.handle_text(text, client);
+            return self.handle_text(text, client, modifiers);
         }
         // 按住 Shift 打的大写字母：缺省是临时打英文，先把拼音原样上屏，再把字母交给应用；
-        // `[general] shift_letter = "compose"` 时进缓冲区（Core 按小写匹配、原样上屏时还原大写）
+        // `[general] shift_letter = "compose"` 时进缓冲区（Core 按小写匹配、原样上屏时还原大写）。
+        // ⇪ 亮着送来的大写不参与这条策略，一律整个交给应用（见 [`shifted_uppercase`]）
         if c.is_ascii_uppercase() {
-            if host::with(|h| h.engine.shift_letter_compose()).unwrap_or(false) {
+            if shifted_uppercase(c, modifiers)
+                && host::with(|h| h.engine.shift_letter_compose()).unwrap_or(false)
+            {
                 host::with(|h| h.engine.push(c));
                 self.refresh(client);
                 return true;
@@ -206,5 +222,41 @@ impl QingjianInputController {
                 false
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn modifiers(shift: bool) -> Modifiers {
+        Modifiers {
+            option: false,
+            shift,
+            control: false,
+            command: false,
+        }
+    }
+
+    /// 按着 Shift 的大写才算 Shift 输入；小写不算（它照常进组句，跟 `shift_letter` 无关）。
+    #[test]
+    fn only_a_shift_held_uppercase_counts() {
+        assert!(shifted_uppercase('A', modifiers(true)));
+        assert!(!shifted_uppercase('A', modifiers(false)));
+        for shift in [true, false] {
+            assert!(!shifted_uppercase('a', modifiers(shift)), "{shift}");
+            assert!(!shifted_uppercase('1', modifiers(shift)), "{shift}");
+        }
+    }
+
+    /// Caps Lock 亮着（没按 Shift）送来的大写不参与 `shift_letter`：那种大写只是大写锁定，
+    /// 进了组句就成了拼音里的幽灵字母。
+    #[test]
+    fn caps_lock_uppercase_is_not_a_shift_letter() {
+        assert!(!shifted_uppercase('C', modifiers(false)), "⇪ 亮着打的大写");
+        assert!(
+            shifted_uppercase('C', modifiers(true)),
+            "⇧ + C 才是 Shift 输入"
+        );
     }
 }

@@ -131,6 +131,9 @@ Engine 侧在 `engine/rescoring/`：接了打分器就取 Viterbi 前 `RESCORE_P
 `Config`（TOML 配置文件，`[general]` / `[shortcut]` / `[fuzzy]` / `[dictionaries]` / `[apps]` / `[predict]` 分节，首次运行写模板，
 `set_value` 用 toml_edit 原地改键保留注释；`[model] enabled` 本地整句模型开关，`LocalModelConfig`；
 中英模式两项：`[shortcut] switch_mode`（`SwitchKeys`：勾选 shift / control / ctrl+alt+space，可多选，老配置的单个字符串照读）与 `[general] english_mode`（内置英文模式总开关））；
+`key_tap::KeyTap` 是修饰键单击状态机（目前只有 macOS 用）：喂 `ModifierEvent { switch, slot, bare }`——`slot` 是左 / 右键位（聚合标志分不出左右），
+`bare` 是按下那一刻没搭着别的修饰键；抬起时只剩那一个键位才算一次单击，`interrupt` 作废普通键插进来的那次，`resync` 拿聚合标志清掉漏了抬起的键位。
+`Config::migrate_macos_pure_english` 是 macOS 升级时的一次性迁移（改 `[general] english_candidates`，靠配置同目录的标记文件保证只跑一次）；
 `extra_dictionaries` 列出 / 加载随包领域词库与用户 `dicts/`
 （mac 壳与 Windows Server 共用，同名 `.qj` 优先于 `.tsv`）；`code_tables` 同构地列出 / 加载随包根 `codes/` 与用户 `codes/` 的码表
 （`[aux_code] disabled` 是黑名单，`[general] aux_code_key` 缺省 `;` 且校验后退回缺省、`aux_code_show` 是显示码开关）；
@@ -199,9 +202,18 @@ IMK 输入法，源码按 `app / host / imk / candidates / menubar / preferences
   `[dictionaries] domains` 打开随包的领域词库（`Resources/dicts/` 11 本，缺省只开 `idioms`），`disabled` 关掉用户目录 `dicts/` 里的某本导入词库；
   偏好设置「词库」页随包的可开关、导入的可开关 / 移除，可导入 TSV / Rime yaml / .qj。
 - 中英模式是 `host/mode.rs::ModeState` 自己的一份进程级状态（不再是 Caps Lock 硬件状态）：`[shortcut] switch_mode` 勾选的键单击一下翻一次，
-  单击判定用跨平台的 `qingjian-platform::key_tap::KeyTap`（按下到抬起之间没敲别的键才算单击），`FlagsChanged` 在 `imk/controller/mode.rs::handle_flags` 里喂给它；
-  Caps Lock 只管大小写，状态项靠现成的 0.25 s 轮询带 ⇪。英文模式且这个应用不给英文候选、且不在组句时，`dispatch_event` 在把按键映射成选择器**之前**整段放行（`ModeState::passthrough`），
-  所以 Space / Enter / Tab / 方向键与各快捷键都归应用，与系统 ABC 一致；切模式时 `commit_raw` + 停联想 + 收候选框，不留幽灵文本。
+  单击判定用 `qingjian-platform::key_tap::KeyTap`——它按**物理键位**记（`ModifierEvent { switch, slot, bare }`，macOS 左 / 右 Shift 是两个 slot，
+  聚合的 `modifierFlags` 分不出左右），按下那一刻还要求**没搭着别的修饰键**（`bare`，`imk/modifiers.rs::bare_press` 判 ⌘⌥⌃ 与 Fn，Caps Lock 亮着不算），
+  抬起时手上只剩这一个键位才命中；`FlagsChanged` 在 `imk/controller/mode.rs::handle_flags` 里喂给它，判定之后再用聚合标志 `resync` 对账
+  （输入法可能在按住 Shift 时才被激活，漏掉抬起会留幽灵按下；对账必须在判定之后，否则抬起会被当成按下）。KeyDown 一律 `interrupt` 作废正按着的那次单击。
+  Caps Lock 只管大小写，状态项靠现成的 0.25 s 轮询带 ⇪；`[general] shift_letter = "compose"` 也**只认真正按住 Shift 打出的大写**（`imk/controller/text.rs` 要 `Modifiers.shift`），
+  Caps Lock 送来的大写仍旧直接交给应用、不进组句。
+  英文模式且这个应用不给英文候选、且不在组句时是纯直通，判定与翻译路径的先后写在 `imk/controller/route.rs::Route::decide`（`dispatch_event` 按它分发）：
+  **纯直通先于确认译文与翻译快捷键**，所以这一模式下连快捷键都不拦，Space / Enter / Tab / 方向键与各应用快捷键都归应用，与系统 ABC 一致。
+  直通判定要看当前应用给不给英文候选，而 `activateServer:` 不保证报得出 bundle identifier，所以 `dispatch_event` 开头先 `note_application` 再算。
+  切模式时 `commit_raw` + `end_translation`（放弃待确认的译文）+ 停联想 + 收候选框，不留幽灵文本。
+- macOS 升级时的一次性迁移：`Config::migrate_macos_pure_english` 在 `Settings::load` 读配置前跑，把老配置的 `[general] english_candidates` 改成 `false`
+  （缺这一项的补上），改之前在配置同目录落一个 `.pure-english-migrated` 标记文件——**只跑这一次**，用户之后在「通用」页重新勾上就不再动它。
 - 系统文本替换（系统设置「键盘 → 文本替换」）：`host/config/text_replacements.rs` 从 `NSUserDefaults` 全局域读 `NSUserDictionaryReplacementItems`
   （每条 `{ on, replace, with }`），激活输入法时重读，变了就经 Core `merge_replacements` 并进配置里的自定义短语再 `set_custom_phrases`；
   `[general] system_text_replacements` 开关（缺省开，「自定义短语」页勾选框），内容可能含证件号、地址，日志只记条数。

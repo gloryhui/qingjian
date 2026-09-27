@@ -339,7 +339,7 @@ CC-CEDICT 表（`dict-convert cedict`）保留为备用来源，覆盖面广但�
   `host/` 是进程级单例（一个 Engine + 一个候选窗口，`thread_local`，IMK 回调全在主线程；`mod.rs` 放结构体与 `with`，`init.rs` 启动加载、`config.rs` 热加载、`settings.rs` 菜单 / 偏好设置动作、`dictionaries.rs` 词库管理、`cloud.rs` 云端、`diagnostics.rs` 诊断与日志、`presenting.rs` 呈现），
   `host/` 下是会话状态 `session.rs`、联想轮询定时器 `predict_monitor.rs`、配置文件监视与定时落盘 `config_watch.rs`、
   短提示 `notice.rs`、翻译选中文字的任务 `translation_job.rs`、附加词库装配 `extra_dictionaries.rs` / `dictionary_info.rs`；
-  `imk/`：`controller/`（`mod.rs` 是类定义与按键分发，`text` / `command` / `translate` / `display` / `commit` 各管一段）用 `define_class!` 继承 `IMKInputController`（类名 `QingjianInputController`，
+  `imk/`：`controller/`（`mod.rs` 是类定义与按键分发，`route.rs` 定这一键先归谁（纯直通 / 确认译文 / 翻译快捷键 / 其余），`text` / `command` / `translate` / `display` / `commit` / `mode` 各管一段）用 `define_class!` 继承 `IMKInputController`（类名 `QingjianInputController`，
   与 Info.plist 的 `InputMethodServerControllerClass` 一致），只做按键 → Engine、Engine → 窗口；
   `client.rs` 用 `msg_send!` 封装 IMKTextInput（`setMarkedText:` / `insertText:` /
   `attributesForCharacterIndex:lineHeightRectangle:` 取光标矩形）；`modifiers.rs` / `secure_input.rs` 查系统状态；
@@ -364,10 +364,19 @@ CC-CEDICT 表（`dict-convert cedict`）保留为备用来源，覆盖面广但�
 - 配置只有一条通路：`Host::apply_config` 把当前 `Config` 推给 Engine（模糊音、模式键、Predictor 重建、释义表切换）与界面
   （每页候选数、翻页键、外观、☁︎ 标识、菜单勾选、设置窗口控件）。启动、菜单开关、设置窗口、`host/config/watch.rs`
   每秒一次的 mtime 监视全都走它；三个入口都只写 `config.toml`，不各存一套状态。解析失败沿用上一份，错误显示在菜单与设置窗口里。
-  按键走 `inputText:client:` +
-  `didCommandBySelector:client:`，不用 `handleEvent:`。**组句期间 `didCommandBySelector:` 对不认识的
-  选择器也要返回 YES**：返回 NO 会让应用自己处理方向键，应用一动光标就把 marked text 丢了，
+  按键走第一层协议 `handleEvent:client:`（实现它就不再收到 `inputText:` / `didCommandBySelector:`），在 `dispatch_event` 里自己分发：
+  先认当前应用（`activateServer:` 不保证报得出 bundle identifier，直通与按应用开关都要用它）、登录窗口一律交还系统，
+  `FlagsChanged` 交给单击判定，`KeyDown` 依次是**纯直通 → 确认译文 → 翻译快捷键 → 组句中的修饰键 + 数字 → 命令键 → 文本**（先后顺序是
+  `controller/route.rs::Route::decide` 的判定，有表可测）。**组句期间不认识的编辑动作一律吞掉**：返回 NO 会让应用自己处理方向键，应用一动光标就把 marked text 丢了，
   而我们的缓冲区和候选框还在（2026-09-03 踩过）。
+- 中英模式只有「单击 `[shortcut] switch_mode` 勾选的键」这一个来源，**Caps Lock 只管大小写、不参与模式**（Windows 同一套机制，判定各在自己的壳里）。
+  macOS 的判定要落到物理键位：`NSEventModifierFlags` 是聚合的，分不出左右两只 Shift，也看不出按下 Shift 之前是否已经搭着 ⌘ / ⌥ / ⌃，
+  所以 `imk/modifiers.rs` 按 keyCode 给出「哪个键位 + 是不是裸按」，交给 `qingjian-platform::key_tap::KeyTap` 记键位开合，抬起时只剩那一个键位才算一次单击；
+  每次判定后再拿聚合标志 `resync`（输入法可能在按住 Shift 时才被激活，抬起事件会漏）。纯直通模式下这一键整个交给应用，连翻译快捷键都不拦，
+  且切模式时一并 `end_translation`，不让待确认的译文漏进新模式。`[general] shift_letter = "compose"` 只认真正按住 Shift 打出的大写，
+  Caps Lock 送来的大写仍旧直接交给应用。偏好设置里没有切换键与内置英文模式的控件，那两项改配置文件。
+- 老配置升到纯直通：`Config::migrate_macos_pure_english` 在本壳读配置前跑一次，把 `[general] english_candidates` 改成 `false`，
+  并在配置同目录落 `.pure-english-migrated` 标记——**只改这一次**，用户之后在「通用」页重新勾上不再被动。迁移没做成（配置坏了）只警告，保持原样。
 - `define_class!` 的类在首次调用 `class()` 时才注册到 ObjC 运行时，而 IMKServer 初始化时就按
   Info.plist 的类名查找，找不到会**静默退回基类**，症状是按键全部透传、像在打英文。
   必须先 `QingjianInputController::class()` 再建 IMKServer（2026-09-03 踩过）。
@@ -407,8 +416,8 @@ CC-CEDICT 表（`dict-convert cedict`）保留为备用来源，覆盖面广但�
   DLL 用最近收键记下的 `ITfContext` 经编辑会话落进文档；应用强行终止组句（`OnCompositionTerminated`）时拼音已被框架定成普通文本，
   DLL 只记「Server 缓冲过期」，下次说话前先 `Commit` 并丢掉交出的文本，不再插一次。
   中英模式：**Windows 与 macOS 用同一套机制**，都按本地习惯用单击切换键（`[shortcut] switch_mode`）在中 / 英间翻转，
-  判定放在 `qingjian-platform::key_tap::KeyTap`（按下到抬起之间没插别的键才算单击），
-  macOS 壳的状态在 `host/mode.rs::ModeState`、Windows 在 `com/key/tap.rs`；Caps Lock 只管大小写，不参与模式。
+  判定各在自己的壳里（macOS 是 `qingjian-platform::key_tap::KeyTap`，Windows 是 `com/key/tap.rs`），
+  macOS 壳的状态在 `host/mode.rs::ModeState`；Caps Lock 只管大小写，不参与模式。
   切换键由 `[shortcut] switch_mode` 勾选（`SwitchKeys`：单击 `shift`（缺省）/ 单击 `control` / `ctrl+alt+space`，可多选，空列表 = 不用键切），
   `[general] english_mode` 关掉则整个内置英文模式停用（issue #81）。**模式全局一份、存在 Server**（`Router.english`，与搜狗一致）：
   DLL 里用户切了（切换键、语言栏按钮、右键菜单、任务栏转换模式）用 `ModeChanged` 报上去；激活、线程得到焦点（`com/focus.rs` 的
