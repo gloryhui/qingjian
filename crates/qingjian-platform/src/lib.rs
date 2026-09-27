@@ -8,6 +8,7 @@ mod config;
 pub mod dirs;
 mod error;
 pub mod extra_dictionaries;
+pub mod key_tap;
 pub mod logs;
 pub mod protocol;
 pub mod resources;

@@ -49,7 +49,9 @@ pub struct GeneralConfig {
     /// 组句中的拼音显示在行内、候选窗口还是两处都显示。
     pub preedit: PreeditMode,
 
-    /// 英文模式（Caps Lock 亮着）是否给英文候选（补全与拼错纠正）。关掉就是纯直通。
+    /// 英文模式（单击切换键切过去）是否给英文候选（补全与拼错纠正）。关掉就是纯直通：这一模式下按键整个
+    /// 交给应用，与系统英文键盘一致。缺省开；macOS 首次运行写出的配置里是关（见 `template_english_candidates!`），
+    /// 老配置的写法不变。
     pub english_candidates: bool,
 
     /// 繁体输出模式。

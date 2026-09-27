@@ -35,6 +35,9 @@ impl Host {
         self.cloud_slots = config.predict.slots;
         self.page_keys = config.general.page_keys();
         self.preedit_mode = config.general.preedit;
+        // 中英模式：切换键与总开关来自配置，模式本身是输入法自己记的那一份
+        self.mode
+            .set_settings(config.shortcut.switch_mode, config.general.english_mode);
         self.english_candidates = config.general.english_candidates;
         self.apps = config.apps.clone();
         self.window.set_theme(config.general.theme);
@@ -92,7 +95,7 @@ impl Host {
         }
         let cloud_active = self.engine.prediction_enabled();
         self.indicator.set_cloud(cloud_active);
-        self.indicator.update();
+        self.indicator.update(self.mode.english());
         self.menu.sync(&config, cloud_active, self.settings.error());
         let key_present = config
             .predict

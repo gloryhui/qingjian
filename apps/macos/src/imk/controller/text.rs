@@ -7,12 +7,13 @@ impl QingjianInputController {
         tracing::debug!(%text, "inputText");
         self.note_application(&client);
         let mut composing = host::with(|h| !h.engine.composition().is_empty()).unwrap_or(false);
-        let english = modifiers::caps_lock_on();
-        // 终端、编辑器这类应用（`[apps] english_candidates_off`）里英文模式是纯直通
+        // 中英模式是输入法自己记的那一份（单击 Shift 翻），Caps Lock 只管大小写
+        let english = host::with(|h| h.mode.english()).unwrap_or(false);
+        // 显式开了英文候选才有英文词；终端、编辑器这类应用（`[apps] english_candidates_off`）里不给
         let english_candidates = english
             && host::with(|h| h.english_candidates_in(client.bundle_identifier().as_deref()))
                 .unwrap_or(false);
-        // 英文模式组词中 Caps Lock 灭了（或开关关了）：敲的字母先原样上屏，别把它们当拼音
+        // 英文候选组词中候选又关了（改了配置或换到不给候选的应用）：敲的字母先原样上屏，别把它们当拼音
         if composing
             && !english_candidates
             && host::with(|h| h.engine.english_mode()).unwrap_or(false)
@@ -32,7 +33,6 @@ impl QingjianInputController {
             return false;
         };
         let c = char::from(*byte);
-        host::with(|h| h.indicator.update());
         // 缓冲区为空时敲 ? 先进问字模式（配置 `[shortcut] question_mark`，缺省关），中英文模式都行：
         // 后面跟字母就是在问字，跟别的键就还原成问号
         if !composing
@@ -51,7 +51,7 @@ impl QingjianInputController {
             return true;
         }
         let question = composing && host::with(|h| h.engine.question_mode()).unwrap_or(false);
-        // 英文模式下问字：Caps Lock 让字母以大写送来，按小写收进问题
+        // 英文模式下问字：字母以大写送来（按着 Shift 或 Caps Lock 亮着），按小写收进问题
         let c = if question && english && c.is_ascii_uppercase() {
             c.to_ascii_lowercase()
         } else {
@@ -60,30 +60,28 @@ impl QingjianInputController {
         host::with(|h| h.engine.set_english_mode(english_candidates && !question));
         let (page_previous, page_next) =
             host::with(|h| h.page_keys).unwrap_or(qingjian_platform::DEFAULT_PAGE_KEYS);
-        // Caps Lock 亮着 = 英文模式：不组句、不转标点，字母默认小写、按住 Shift 才大写
-        if english && !question {
-            // Caps Lock 亮着时 macOS 不管按没按 Shift 送来的都是大写，只能读 Shift 状态：按着才大写
-            let letter = if modifiers::shift_down() {
-                c.to_ascii_uppercase()
-            } else {
-                c.to_ascii_lowercase()
-            };
-            if !english_candidates {
-                if composing {
-                    self.commit_raw(client);
-                }
-                if c.is_ascii_alphabetic() {
-                    client.insert_text(&letter.to_string());
-                    host::with(|h| h.engine.note_passthrough(letter));
-                    return true;
-                }
+        // 英文模式且不给英文候选 = 纯直通，跟系统 ABC 键盘一样：这一键整个交给应用，青简不接、不组句、
+        // 不转全角标点。没在组句的键在 `dispatch_event` 里已经整个放行，走到这里只可能是组句中途
+        // 候选又关了，先把敲的原样上屏，别留拼音幽灵文本；问字模式是显式按出来的，不收在这一步。
+        if english && !english_candidates && !question {
+            if composing {
+                self.commit_raw(client);
                 host::with(|h| h.engine.note_passthrough(c));
-                return false;
             }
-            // 英文候选：字母（以及组词中的 _ ' -）进缓冲区，候选来自英文词表。选词与中文模式一样：
-            // 空格选高亮（词上屏后空格照样交给应用，接着打下一个词）、数字选当前页第 N 个、翻页键翻页；
-            // 数字对应的格子没有候选（kubectl 这类词表没有的词、候选不足 N 个）时是标识符的一部分（foo1）。
-            // 回车、标点先把敲的字母原样上屏再交给应用
+            return false;
+        }
+        // 英文候选：字母（以及组词中的 _ ' -）进缓冲区，候选来自英文词表。选词与中文模式一样：
+        // 空格选高亮（词上屏后空格照样交给应用，接着打下一个词）、数字选当前页第 N 个、翻页键翻页；
+        // 数字对应的格子没有候选（kubectl 这类词表没有的词、候选不足 N 个）时是标识符的一部分（foo1）。
+        // 回车、标点先把敲的字母原样上屏再交给应用
+        if english && !question {
+            // 按着 Shift 打的大写进缓冲区（词表里有 `GitHub` 这类）；Caps Lock 只管大小写，
+            // 亮着时字母不分按没按 Shift 都以大写送来，收回小写去匹配词表
+            let letter = if modifiers::caps_lock_on() {
+                c.to_ascii_lowercase()
+            } else {
+                c
+            };
             if composing
                 && let Some(offset) = c.to_digit(10).filter(|d| *d > 0)
                 && let Some(index) =

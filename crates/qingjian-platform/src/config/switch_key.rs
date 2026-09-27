@@ -2,8 +2,9 @@ use serde::de::{self, Deserializer, SeqAccess, Visitor};
 use serde::ser::{SerializeSeq, Serializer};
 use serde::{Deserialize, Serialize};
 
-/// 一个中 / 英切换键（Windows）。`shift` / `control` 是**单击**那个修饰键；`ctrl+alt+space` 是组合键
-/// （走 TSF 保留键登记，与「翻译选中文字」同一套机制）。macOS 的切换键是 Caps Lock，本项不生效。
+/// 一个中 / 英切换键。`shift` / `control` 是**单击**那个修饰键；`ctrl+alt+space` 是组合键
+/// （走 TSF 保留键登记，与「翻译选中文字」同一套机制）。macOS 用前两个（⌃⌥Space 归 VoiceOver，第三个不生效），
+/// 单击的判定见 [`crate::key_tap::KeyTap`]。
 ///
 /// 不用 Ctrl + Space：中文 Windows 把它绑成系统的「输入法/非输入法切换」，系统先截走，输入法拿不到。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

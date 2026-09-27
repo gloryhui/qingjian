@@ -123,7 +123,7 @@ macro_rules! template_apps {
     () => {
         r#"[apps]
 # 按应用改行为，条目是 bundle identifier（`*` 结尾按前缀匹配）。开着「详细日志」时切到一个应用会把它的 bundle identifier 记进日志
-# 英文模式（Caps Lock）下不给候选的应用：终端与代码编辑器里候选窗口会挡住应用自己的补全，vim 里 Tab 和方向键也另有含义。设成 [] 就处处都给
+# 英文模式下不给候选的应用：终端与代码编辑器里候选窗口会挡住应用自己的补全，vim 里 Tab 和方向键也另有含义。设成 [] 就处处都给
 english_candidates_off = [
   "com.apple.Terminal", "com.googlecode.iterm2", "dev.warp.Warp-Stable", "com.mitchellh.ghostty", "io.alacritty", "net.kovidgoyal.kitty",
   "com.microsoft.VSCode", "com.todesktop.230313mzl4w4u92", "dev.zed.Zed", "com.jetbrains.*", "org.vim.MacVim", "com.sublimetext.*",
@@ -151,12 +151,35 @@ english_candidates_off = [
     };
 }
 
+/// 模板 `[general]` 里的英文候选开关（macOS）：首次运行就写**关**，英文模式是纯直通，与系统 ABC 键盘一致。
+/// 这里与 [`crate::config::GeneralConfig::default`]（开）不同是有意的：老配置没写这一项时仍按缺省走，
+/// 行为不变。测试 `template_parses_to_defaults` 会核对这一处差异。
+#[cfg(target_os = "macos")]
+macro_rules! template_english_candidates {
+    () => {
+        r#"# 英文模式（单击 Shift 切过去）是否给英文候选（补全与拼错纠正）：开着才组英文句、用 Tab 或方向键选词。
+# 缺省关 = 纯直通：英文模式里敲的字母、数字、标点、空格、回车、Tab 全部直接交给应用，与系统 ABC 键盘一样
+english_candidates = false
+"#
+    };
+}
+
+/// 模板 `[general]` 里的英文候选开关（Windows / Linux）：值与 [`crate::config::GeneralConfig::default`] 一致。
+#[cfg(not(target_os = "macos"))]
+macro_rules! template_english_candidates {
+    () => {
+        r#"# 英文模式是否给英文候选（补全与拼错纠正）：Tab 或方向键选词，空格、回车、标点仍原样上屏敲的字母；false 就是纯直通
+english_candidates = true
+"#
+    };
+}
+
 /// 模板 `[shortcut]` 一节里的修饰键组合（macOS 命名）。缺省值两个平台一样，只是写法与注释按平台的键名。
 #[cfg(not(windows))]
 macro_rules! template_shortcut_keys {
     () => {
-        r#"# 中 / 英模式切换键（Windows 用），可多选：shift 单击（缺省）/ control 单击 / ctrl+alt+space 组合键；[] 不用键切换。
-# macOS 的切换键是 Caps Lock（系统级），本项不生效
+        r#"# 中 / 英模式切换键，可多选：shift 单击（缺省）/ control 单击 / ctrl+alt+space 组合键；[] 不用键切换，只剩菜单和按钮。
+# 单击 = 按下再抬起、中间没敲别的键，所以 `Shift + A` 这类组合照常打大写、不切模式。macOS 用不了 ctrl+alt+space（⌃⌥Space 归 VoiceOver）
 switch_mode = ["shift"]
 # 数字键配这些修饰键上屏候选的译词：translation 第一个译词，translation_second 第二个（候选右侧有两个译词时）
 # 任意修饰键组合（option / shift / control / command 用 + 连），偏好设置里点按钮录制；别用 control+数字（系统切桌面）和 command+数字（应用切标签页）
@@ -215,9 +238,9 @@ renderer = "qingjian"
 font = ""
 # 组句中的拼音显示在哪：both 行内和候选窗口 / inline 只在行内 / window 只在候选窗口（应用里不放 marked text）
 preedit = "both"
-# 英文模式（Caps Lock 亮着）是否给英文候选：Tab 或方向键选词，空格、回车、标点仍原样上屏敲的字母；false 就是纯直通
-english_candidates = true
-
+"#,
+    template_english_candidates!(),
+    r#"
 # 繁体输出模式。开启后上屏繁体，不影响词库和个人词频的简体记录。
 traditional = false
 # 中文模式下整段输入是英文词时（hello / key）是否让中文候选排第一、英文词第二；缺省 false：拼音不像话的输入英文词排第一
@@ -225,8 +248,9 @@ chinese_first = false
 # 中文模式下按住 Shift 敲的字母：passthrough 拼音原样上屏、字母交给应用（缺省，与以前一致）/ compose 收进组句
 # 缓冲区参与匹配，这样 Cpan 与 cpan 一样能出「C盘」。英文模式与英文直输段（no-Way）不受影响
 shift_letter = "passthrough"
-# 内置英文模式：开着时单击切换键（[shortcut] switch_mode）或 Caps Lock 亮着进英文模式
-# 关掉后青简保持中文模式，切换键与语言栏按钮都不再切过去；要打英文请用系统快捷键（Win+Space）切到别的输入法。只有 Windows 用，macOS 的中英切换是 Caps Lock
+# 内置英文模式：开着才能用单击切换键（[shortcut] switch_mode）与菜单 / 状态条按钮切到英文模式。
+# Caps Lock 亮着不再等于英文模式，它只管大小写
+# 关掉后青简保持中文模式，切换键与语言栏按钮都不再切过去；要打英文请用系统快捷键切到别的输入法（Windows 是 Win+Space）
 english_mode = true
 # 中文模式下（没在组句时）敲的标点转全角：, . ? ! : ; ( ) 等，数字后面的 . 保持半角。Windows 上悬浮状态条的「，。」格可以点着切；macOS 在偏好设置中选择默认中文标点模式
 full_width_punctuation = true
@@ -552,7 +576,11 @@ mod tests {
     #[test]
     fn template_parses_to_defaults() {
         let config: Config = toml::from_str(TEMPLATE).unwrap();
-        assert_eq!(config, Config::default());
+        let mut expected = Config::default();
+        // macOS 的模板一上来就把英文候选写成关（纯直通是 macOS 的缺省体验），Rust 缺省仍是开：
+        // 老配置没写这一项时行为不变。见 template_english_candidates!
+        expected.general.english_candidates = !cfg!(target_os = "macos");
+        assert_eq!(config, expected);
     }
 
     #[test]

@@ -1,7 +1,7 @@
 //! 菜单栏里的「中 / 英」状态项。
 //!
 //! 输入源图标（Info.plist 的 tsInputMethodIconFileKey）没法动态换，所以自己放一个 NSStatusItem。
-//! Caps Lock 的变化不会作为按键送到输入法，用一个定时器轮询系统状态刷新。
+//! 中英模式在切模式那一刻刷一次；Caps Lock 的变化不会作为按键送到输入法，用一个定时器轮询系统状态刷新 ⇪ 标记。
 //!
 //! 状态项一旦创建就**不再隐藏**：`setVisible(false)` 再 `setVisible(true)` 会把它重新排到菜单栏最左边，用户 ⌘ 拖到输入法图标旁的位置就丢了
 //! （固定 autosave 名也保不住），而焦点每进出一次输入框 IMK 就 deactivate / activate 一轮。
@@ -35,8 +35,8 @@ pub struct ModeIndicator {
     /// 正展开着（输入法激活中）。收起时不刷新标题。
     shown: bool,
 
-    /// 上次显示的是否英文模式，避免每次轮询都重设标题。
-    english: Option<bool>,
+    /// 上次显示的 (中英模式, Caps Lock)，避免每次轮询都重设标题。
+    last: Option<(bool, bool)>,
 
     /// 云联想开着：标题带云朵，让用户一眼知道上下文会发出去。
     cloud: bool,
@@ -54,14 +54,14 @@ impl ModeIndicator {
             timer: None,
             collapse_timer: None,
             shown: false,
-            english: None,
+            last: None,
             cloud: false,
             mtm,
         }
     }
 
-    /// 输入法激活：展开状态项并开始轮询；停用时安排的收起取消。
-    pub fn activate(&mut self) {
+    /// 输入法激活：展开状态项并开始轮询；停用时安排的收起取消。`english` 是当前中英模式，标题按它起步。
+    pub fn activate(&mut self, english: bool) {
         if let Some(timer) = self.collapse_timer.take() {
             timer.invalidate();
         }
@@ -69,8 +69,8 @@ impl ModeIndicator {
             self.shown = true;
             self.item.setLength(NSVariableStatusItemLength);
         }
-        self.english = None;
-        self.update();
+        self.last = None;
+        self.update(english);
         if self.timer.is_none() {
             let target = ModeMonitor::new(self.mtm);
             let timer = unsafe {
@@ -114,7 +114,7 @@ impl ModeIndicator {
             return;
         }
         self.shown = false;
-        self.english = None;
+        self.last = None;
         if let Some(button) = self.item.button(self.mtm) {
             button.setTitle(ns_string!(""));
         }
@@ -128,26 +128,27 @@ impl ModeIndicator {
 
     pub fn set_cloud(&mut self, cloud: bool) {
         self.cloud = cloud;
-        self.english = None;
+        self.last = None;
     }
 
-    /// 按当前 Caps Lock 状态刷新标题；收起时不动。
-    pub fn update(&mut self) {
+    /// 按中英模式与 Caps Lock 刷新标题；收起时不动。模式变了当场调一次，Caps Lock 由定时器轮询。
+    pub fn update(&mut self, english: bool) {
         if !self.shown {
             return;
         }
-        let english = modifiers::caps_lock_on();
-        if self.english == Some(english) {
+        let caps = modifiers::caps_lock_on();
+        if self.last == Some((english, caps)) {
             return;
         }
-        self.english = Some(english);
+        self.last = Some((english, caps));
         if let Some(button) = self.item.button(self.mtm) {
             let mode = if english { "英" } else { "中" };
-            let title = if self.cloud {
-                format!("{mode} ☁︎")
-            } else {
-                mode.to_owned()
-            };
+            // Caps Lock 只管大小写了，亮着得标出来，不然用户没处看
+            let title = format!(
+                "{mode}{}{}",
+                if caps { " ⇪" } else { "" },
+                if self.cloud { " ☁︎" } else { "" }
+            );
             button.setTitle(&NSString::from_str(&title));
         }
     }
@@ -163,7 +164,7 @@ define_class!(
     impl ModeMonitor {
         #[unsafe(method(tick:))]
         fn tick(&self, _timer: Option<&AnyObject>) {
-            crate::host::with(|h| h.indicator.update());
+            crate::host::with(|h| h.indicator.update(h.mode.english()));
         }
 
         #[unsafe(method(collapse:))]

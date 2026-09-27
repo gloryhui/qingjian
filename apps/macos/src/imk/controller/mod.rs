@@ -20,6 +20,7 @@ use crate::menubar;
 mod command;
 mod commit;
 mod display;
+mod mode;
 mod text;
 mod translate;
 
@@ -99,7 +100,7 @@ define_class!(
                     h.engine.set_application(bundle);
                     h.refresh_text_replacements();
                     h.reload_config_if_changed();
-                    h.indicator.activate();
+                    h.indicator.activate(h.mode.english());
                     h.watch.start();
                 });
             });
@@ -191,10 +192,17 @@ impl QingjianInputController {
         host::with(|h| h.engine.application() == Some(LOGIN_WINDOW)).unwrap_or(false)
     }
 
-    /// 一个按键事件的分发：只管按下；Cmd / Ctrl 组合除 Cmd+左右外一律交给应用；命令键映射成选择器；其余按字符当文本。
+    /// 一个按键事件的分发：先接修饰键（单击切换中 / 英）；只管按下；Cmd / Ctrl 组合除 Cmd+左右外一律交给应用；
+    /// 命令键映射成选择器；英文模式的纯直通整个放行；其余按字符当文本。
     fn dispatch_event(&self, event: &NSEvent, client: TextClient<'_>) -> bool {
-        if event.r#type() != NSEventType::KeyDown || self.in_login_window() {
+        if self.in_login_window() {
             return false;
+        }
+        // Shift / Ctrl 的按下与抬起只作为 FlagsChanged 送来，单击切换中 / 英要在这里判定（见 [`super::mode`]）
+        match event.r#type() {
+            NSEventType::FlagsChanged => return self.handle_flags(event, client),
+            NSEventType::KeyDown => {}
+            _ => return false,
         }
         let flags = event.modifierFlags();
         let (command, control, option, shift) = (
@@ -210,6 +218,8 @@ impl QingjianInputController {
             control,
             command,
         };
+        // 这个键插在切换键的按下与抬起之间：那次单击作废（`Shift + A` 不切模式）
+        host::with(|h| h.mode.key_down(None, event.isARepeat()));
         // 提示在显示：敲任何键先收掉，键照常处理
         host::with(|h| h.clear_notice());
         // 翻译选中文字进行中：回车 / 空格 / 1 接受，Esc 放弃，其他键放弃后照常交给应用
@@ -226,6 +236,30 @@ impl QingjianInputController {
             && !host::with(|h| !h.engine.composition().is_empty()).unwrap_or(false)
         {
             return self.translate_selection(client);
+        }
+        // 英文模式的纯直通：字母、数字、标点、Space / Enter / Tab / 方向键与各种快捷键整个交给应用，
+        // 不组句、不产生 marked text、不转全角标点、不查候选。组句中不直通：那一键要先收掉手上的拼音。
+        // Caps Lock 不参与：它只管大小写，中英模式只有单击切换键这一个来源。
+        if host::with(|h| {
+            h.mode.passthrough(
+                h.english_candidates_in(h.engine.application()),
+                !h.engine.composition().is_empty(),
+            )
+        })
+        .unwrap_or(false)
+        {
+            // 直通的字符记进历史与输入日志，切回中文时上下文才接得上；快捷键不记
+            if !command
+                && !control
+                && !option
+                && let Some(c) = event
+                    .characters()
+                    .and_then(|text| text.to_string().chars().next())
+                    .filter(|c| c.is_ascii_graphic() || *c == ' ')
+            {
+                host::with(|h| h.engine.note_passthrough(c));
+            }
+            return false;
         }
         // 修饰键 + 数字：按配置的两组组合上屏第一 / 第二个译词（缺省 ⌥ 与 ⇧⌥）、删候选（缺省 ⇧）。
         // 只在组句中认：不在组句时 ⇧4 就是 `$`，得走下面的标点转换（中文模式出 ￥、⇧6 出 ……、⇧1 出 ！），

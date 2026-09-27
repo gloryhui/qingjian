@@ -406,7 +406,9 @@ CC-CEDICT 表（`dict-convert cedict`）保留为备用来源，覆盖面广但�
   失焦 / 停用时 DLL 发 `Commit`，Server 回 `Committed { text }`（缓冲区原样交出，对应 macOS 的 `commitComposition`），
   DLL 用最近收键记下的 `ITfContext` 经编辑会话落进文档；应用强行终止组句（`OnCompositionTerminated`）时拼音已被框架定成普通文本，
   DLL 只记「Server 缓冲过期」，下次说话前先 `Commit` 并丢掉交出的文本，不再插一次。
-  中英模式：**Windows 与 macOS 机制不同**。macOS 用 Caps Lock 当中英切换键；Windows 按本地习惯，单击切换键在中 / 英间翻转，
+  中英模式：**Windows 与 macOS 用同一套机制**，都按本地习惯用单击切换键（`[shortcut] switch_mode`）在中 / 英间翻转，
+  判定放在 `qingjian-platform::key_tap::KeyTap`（按下到抬起之间没插别的键才算单击），
+  macOS 壳的状态在 `host/mode.rs::ModeState`、Windows 在 `com/key/tap.rs`；Caps Lock 只管大小写，不参与模式。
   切换键由 `[shortcut] switch_mode` 勾选（`SwitchKeys`：单击 `shift`（缺省）/ 单击 `control` / `ctrl+alt+space`，可多选，空列表 = 不用键切），
   `[general] english_mode` 关掉则整个内置英文模式停用（issue #81）。**模式全局一份、存在 Server**（`Router.english`，与搜狗一致）：
   DLL 里用户切了（切换键、语言栏按钮、右键菜单、任务栏转换模式）用 `ModeChanged` 报上去；激活、线程得到焦点（`com/focus.rs` 的

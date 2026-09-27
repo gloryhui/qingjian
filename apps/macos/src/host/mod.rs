@@ -10,6 +10,7 @@ mod config;
 mod diagnostics;
 mod dictionaries;
 mod init;
+mod mode;
 mod model;
 mod presenting;
 mod session;
@@ -50,6 +51,7 @@ use cloud::{CloudTestMonitor, PredictMonitor};
 use config::{ConfigWatch, TextReplacement};
 pub use dictionaries::DictionaryInfo;
 pub use init::init;
+use mode::ModeState;
 use model::RescoreMonitor;
 use presenting::Notice;
 pub use presenting::TranslationJob;
@@ -140,7 +142,10 @@ pub struct Host {
     /// 横排时上下键展开成矩阵的开关（配置 `[general] horizontal_grid`，缺省关）。
     pub horizontal_grid: bool,
 
-    /// 英文模式是否给英文候选（配置 `[general] english_candidates`）。
+    /// 中 / 英模式与单击切换键的状态，见 [`ModeState`]。进程级一份，所有应用共用。
+    pub mode: ModeState,
+
+    /// 英文模式是否给英文候选（配置 `[general] english_candidates`）。关着时英文模式是纯直通。
     pub english_candidates: bool,
 
     /// 上次从系统读到的文本替换（激活输入法时重读），`[general] system_text_replacements` 开着时并进自定义短语。

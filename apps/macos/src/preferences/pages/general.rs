@@ -134,17 +134,12 @@ impl GeneralPage {
         );
         let traditional = checkbox(mtm, "繁体输出", Setting::Traditional, target);
         row_checkbox(layout, &traditional);
-        let english = checkbox(
-            mtm,
-            "英文模式（Caps Lock）也给候选",
-            Setting::EnglishCandidates,
-            target,
-        );
+        let english = checkbox(mtm, "英文模式也给候选", Setting::EnglishCandidates, target);
         row_checkbox(layout, &english);
         note(
             layout,
             mtm,
-            "Tab 或方向键选词；空格、回车、标点仍原样上屏敲的字母，不选词时与直接打字一样。",
+            "不勾选时英文模式是纯直通：按键直接交给应用，与系统 ABC 键盘一样（首次运行的配置即如此）。勾上才给英文补全与拼写纠正，用 Tab 或方向键选词。",
         );
         let english_off_in_apps = checkbox(
             mtm,
