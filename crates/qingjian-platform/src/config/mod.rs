@@ -557,10 +557,13 @@ impl Config {
     /// macOS 的一次性迁移：把老配置里的英文模式改成纯直通。
     ///
     /// 纯直通（英文模式整个把按键交给应用，与系统 ABC 键盘一样）是 macOS 的新缺省体验，而老配置写着
-    /// `english_candidates = true`——只改模板救不了已经装好的机器，它们升级后仍旧组英文句。所以第一次
-    /// 启动时改这一处：值为 `true` 或者干脆没写的，原地改成 `false`（注释与顺序照 [`Self::set_value`]
-    /// 保留）。同目录留一个印记文件，**只此一次**：之后用户在偏好设置里自己打开的 `true` 不再被动。
-    /// 返回是否真的改了配置文件。
+    /// `english_candidates = true`——只改模板救不了已经装好的机器，它们升级后仍旧组英文句。所以第一次启动
+    /// 检查一次：值为 `true` 或者干脆没写的，原地改成 `false`（注释与顺序照 [`Self::set_value`] 保留）。
+    ///
+    /// 印记文件（[`PURE_ENGLISH_STAMP`]）记的是「这次检查做完了」，**不是**「真的改了东西」：本来就 `false`
+    /// 的（新装读到的模板）也要落印记，否则用户之后自己勾上「英文模式也给候选」，下一次启动又会被当成
+    /// 老配置改回去。落盘顺序因此是硬约束：读得动 → 需要改时先改配置成功 → 最后才写印记，中间任一步失败
+    /// 都不留印记，下一次启动还能重试。返回是否真的改了配置文件。
     pub fn migrate_macos_pure_english(path: &Path) -> Result<bool, ConfigError> {
         let stamp = path.with_file_name(PURE_ENGLISH_STAMP);
         if !path.is_file() || stamp.exists() {
@@ -574,31 +577,31 @@ impl Config {
             path: path.to_owned(),
             source: Box::new(source),
         })?;
-        let current = document
+        let changed = document
             .get("general")
             .and_then(|general| general.get("english_candidates"))
-            .and_then(|value| value.as_bool());
-        if current == Some(false) {
-            return Ok(false);
+            .and_then(|value| value.as_bool())
+            != Some(false);
+        if changed {
+            Self::set_value(path, "general", "english_candidates", false)?;
         }
-        // 认得动这份配置才落印记：印记一写就再也不迁，坏配置修好了也不该错过这次改动
+        // 印记一定在配置改成功之后落：写失败时不能提前留下，否则坏在半路就永远不再重试
         std::fs::write(&stamp, PURE_ENGLISH_STAMP_NOTE).map_err(|source| ConfigError::Write {
             path: stamp.clone(),
             source,
         })?;
-        Self::set_value(path, "general", "english_candidates", false)?;
-        Ok(true)
+        Ok(changed)
     }
 }
 
-/// 一次性迁移的印记文件名，写在配置同目录（macOS）。删掉它会再迁一次。
+/// 一次性迁移的印记文件名，写在配置同目录（macOS）：记的是「这次检查做过了」。删掉它会再迁一次。
 const PURE_ENGLISH_STAMP: &str = ".pure-english-migrated";
 
 /// 印记文件的内容：写明这是干什么的，用户看到它才知道删掉的后果。
 const PURE_ENGLISH_STAMP_NOTE: &str = concat!(
-    "青简写过的一次性迁移记录：配置文件里的 [general] english_candidates 被改成 false，",
-    "英文模式从此是纯直通（按键整个交给应用，与系统 ABC 键盘一样）。\n",
-    "在偏好设置里重新打开「英文模式也给候选」不会再被改回去。删掉这个文件会再迁移一次。\n",
+    "青简写过的一次性迁移记录：本次启动检查过 [general] english_candidates，英文模式是纯直通",
+    "（按键整个交给应用，与系统 ABC 键盘一样）。\n",
+    "在偏好设置里重新打开「英文模式也给候选」不会再被改回去。删掉这个文件会再检查一次。\n",
 );
 
 /// 原子写配置文件；数据目录还没有就先建（新账户第一次打开设置时输入法可能还没跑过）。
@@ -752,6 +755,56 @@ mod tests {
             std::fs::read_to_string(&path).unwrap(),
             "[general]\nenglish_candidates = false\n"
         );
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// 本来就是 `false` 的配置（新装读到的模板）也要留下印记：印记记的是「这次检查做过了」，
+    /// 少了它，用户之后自己勾上「英文模式也给候选」，下一次启动又会被当成老配置改回去。
+    #[test]
+    fn pure_english_migration_stamps_a_config_that_was_already_pure() {
+        let dir = std::env::temp_dir().join("qingjian-pure-english-stamp-test");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("config.toml");
+        std::fs::write(&path, "[general]\nenglish_candidates = false\n").unwrap();
+
+        assert!(!Config::migrate_macos_pure_english(&path).unwrap());
+        assert!(path.with_file_name(PURE_ENGLISH_STAMP).exists());
+
+        Config::set_bool(&path, "general", "english_candidates", true).unwrap();
+        assert!(!Config::migrate_macos_pure_english(&path).unwrap());
+        assert!(Config::load(&path).unwrap().general.english_candidates);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// 配置写不进去时不能提前留下印记：印记等于「迁移做过了」，先落下就会让坏在半路的配置永远不再被修。
+    /// 搬开阻塞再跑一次，迁移照旧完成。
+    #[test]
+    fn pure_english_migration_leaves_no_stamp_when_the_config_write_fails() {
+        let dir = std::env::temp_dir().join("qingjian-pure-english-write-fail-test");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("config.toml");
+        std::fs::write(&path, "[general]\nenglish_candidates = true\n").unwrap();
+        // 原子写先写同目录的 `.<配置文件名>.tmp-<进程号>`：拿一个目录占住它，创建就失败。
+        let blocker = dir.join(format!(
+            ".{}.tmp-{}",
+            path.file_name().unwrap().to_string_lossy(),
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&blocker).unwrap();
+
+        assert!(matches!(
+            Config::migrate_macos_pure_english(&path),
+            Err(ConfigError::Write { .. })
+        ));
+        assert!(Config::load(&path).unwrap().general.english_candidates);
+        assert!(!path.with_file_name(PURE_ENGLISH_STAMP).exists());
+
+        std::fs::remove_dir(&blocker).unwrap();
+        assert!(Config::migrate_macos_pure_english(&path).unwrap());
+        assert!(!Config::load(&path).unwrap().general.english_candidates);
+        assert!(path.with_file_name(PURE_ENGLISH_STAMP).exists());
         std::fs::remove_dir_all(&dir).unwrap();
     }
 

@@ -133,7 +133,7 @@ Engine 侧在 `engine/rescoring/`：接了打分器就取 Viterbi 前 `RESCORE_P
 中英模式两项：`[shortcut] switch_mode`（`SwitchKeys`：勾选 shift / control / ctrl+alt+space，可多选，老配置的单个字符串照读）与 `[general] english_mode`（内置英文模式总开关））；
 `key_tap::KeyTap` 是修饰键单击状态机（目前只有 macOS 用）：喂 `ModifierEvent { switch, slot, bare }`——`slot` 是左 / 右键位（聚合标志分不出左右），
 `bare` 是按下那一刻没搭着别的修饰键；抬起时只剩那一个键位才算一次单击，`interrupt` 作废普通键插进来的那次，`resync` 拿聚合标志清掉漏了抬起的键位。
-`Config::migrate_macos_pure_english` 是 macOS 升级时的一次性迁移（改 `[general] english_candidates`，靠配置同目录的标记文件保证只跑一次）；
+`Config::migrate_macos_pure_english` 是 macOS 升级时的一次性迁移（改 `[general] english_candidates`，靠配置同目录的印记文件保证只检查一次）；
 `extra_dictionaries` 列出 / 加载随包领域词库与用户 `dicts/`
 （mac 壳与 Windows Server 共用，同名 `.qj` 优先于 `.tsv`）；`code_tables` 同构地列出 / 加载随包根 `codes/` 与用户 `codes/` 的码表
 （`[aux_code] disabled` 是黑名单，`[general] aux_code_key` 缺省 `;` 且校验后退回缺省、`aux_code_show` 是显示码开关）；
@@ -213,7 +213,9 @@ IMK 输入法，源码按 `app / host / imk / candidates / menubar / preferences
   直通判定要看当前应用给不给英文候选，而 `activateServer:` 不保证报得出 bundle identifier，所以 `dispatch_event` 开头先 `note_application` 再算。
   切模式时 `commit_raw` + `end_translation`（放弃待确认的译文）+ 停联想 + 收候选框，不留幽灵文本。
 - macOS 升级时的一次性迁移：`Config::migrate_macos_pure_english` 在 `Settings::load` 读配置前跑，把老配置的 `[general] english_candidates` 改成 `false`
-  （缺这一项的补上），改之前在配置同目录落一个 `.pure-english-migrated` 标记文件——**只跑这一次**，用户之后在「通用」页重新勾上就不再动它。
+  （缺这一项的补上）。检查做完在配置同目录落一个 `.pure-english-migrated` 印记文件——印记记的是「这次检查过了」而不是「真的改了」，
+  本来就已经是 `false` 的（新装的模板）也落，所以用户之后在「通用」页重新勾上就不再被动。**落盘顺序是硬约束**：读通 → 需要改时先改配置成功 →
+  最后才落印记，中间任一步失败都不留印记，下次启动还能重试。
 - 系统文本替换（系统设置「键盘 → 文本替换」）：`host/config/text_replacements.rs` 从 `NSUserDefaults` 全局域读 `NSUserDictionaryReplacementItems`
   （每条 `{ on, replace, with }`），激活输入法时重读，变了就经 Core `merge_replacements` 并进配置里的自定义短语再 `set_custom_phrases`；
   `[general] system_text_replacements` 开关（缺省开，「自定义短语」页勾选框），内容可能含证件号、地址，日志只记条数。

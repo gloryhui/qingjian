@@ -375,8 +375,9 @@ CC-CEDICT 表（`dict-convert cedict`）保留为备用来源，覆盖面广但�
   每次判定后再拿聚合标志 `resync`（输入法可能在按住 Shift 时才被激活，抬起事件会漏）。纯直通模式下这一键整个交给应用，连翻译快捷键都不拦，
   且切模式时一并 `end_translation`，不让待确认的译文漏进新模式。`[general] shift_letter = "compose"` 只认真正按住 Shift 打出的大写，
   Caps Lock 送来的大写仍旧直接交给应用。偏好设置里没有切换键与内置英文模式的控件，那两项改配置文件。
-- 老配置升到纯直通：`Config::migrate_macos_pure_english` 在本壳读配置前跑一次，把 `[general] english_candidates` 改成 `false`，
-  并在配置同目录落 `.pure-english-migrated` 标记——**只改这一次**，用户之后在「通用」页重新勾上不再被动。迁移没做成（配置坏了）只警告，保持原样。
+- 老配置升到纯直通：`Config::migrate_macos_pure_english` 在本壳读配置前跑一次，把 `[general] english_candidates` 改成 `false`（缺这一项的补上）。
+  印记文件 `.pure-english-migrated` **最后落**（读通 → 要改时先改配置成功 → 才落印记），记的是「这次检查过了」而不是「真的改了」：
+  新装模板本来就是 `false`，也要落印记，否则用户之后在「通用」页勾上的 `true` 会被下一次启动改回去。哪一步失败都不留印记、下次重试，只警告，保持原样。
 - `define_class!` 的类在首次调用 `class()` 时才注册到 ObjC 运行时，而 IMKServer 初始化时就按
   Info.plist 的类名查找，找不到会**静默退回基类**，症状是按键全部透传、像在打英文。
   必须先 `QingjianInputController::class()` 再建 IMKServer（2026-09-03 踩过）。
