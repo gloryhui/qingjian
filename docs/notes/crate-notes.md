@@ -187,12 +187,20 @@ Engine 侧在 `engine/rescoring/`：接了打分器就取 Viterbi 前 `RESCORE_P
 
 IMK 输入法，源码按 `app / host / imk / candidates / menubar / preferences` 分目录。
 
+- 控制器必须覆盖 `recognizedEvents:`，订阅 `KeyDown | FlagsChanged`，否则 IMK 的默认声明只有 `KeyDown`，
+  Shift / Ctrl 的单击状态机收不到修饰键事件。订阅非默认掩码后 IMK 不再提供默认鼠标提交，另订阅三种鼠标按下事件，
+  在 `dispatch_event` 中把未完成拼音原样上屏并返回 false，让点击继续交给应用。
+
 - 输入法菜单（状态项 + 系统输入源菜单）与偏好设置窗口都是配置文件的前端：只写 `config.toml`，`Host::apply_config` 一条通路热加载，激活期间每秒看一次文件 mtime。
   输入方案（`[general] scheme`）也在这里装配：双拼 / 注音设给引擎，形码额外按 `paths::code_table_path()` 挂码表
   （用户目录 `wubi/wubi86.tsv` 优先，包里 `Resources/wubi/` 兜底；找不到只警告并按拼音跑）。
 - `apps/macos/scripts/bundle.sh --install` 打包安装到 `~/Library/Input Methods/`（开发用），`--pkg` 做分发用的 pkg（装 `/Library/Input Methods/`，postinstall 跑 `qingjian-macos --register`
   注册、启用并切成当前输入源；签名 / 公证靠 `QINGJIAN_SIGN_IDENTITY` / `QINGJIAN_INSTALLER_IDENTITY` / `QINGJIAN_NOTARY_PROFILE`，没设就 ad-hoc；`QINGJIAN_TARGET` 指定架构，
   成品 `target/pkg/qingjian-<版本>-macos-<arm64|x86_64>.pkg`）；`scripts/uninstall.sh` 卸载。
+- 本机共存测试：`bundle.sh --test --pkg`（或 `--test --install`）生成 `QingjianTest.app`，输入源显示「青简测试版」，
+  bundle / pkg ID 为 `app.qingjian.inputmethod.test`，IMK 连接名与 `.Hans` 模式 ID 同步切换，进程名为 `qingjian-test`。
+  `app::bundle::user_directory_name()` 按主 bundle ID 选择 `QingjianTest` 数据 / 日志目录；正式版仍为 `Qingjian`。
+  测试包的安装后脚本与随包卸载脚本只操作测试版；安装包为 `target/pkg/qingjian-test-<版本>-macos-<架构>.pkg`，版本带 `-test-<打包时间>`，区分同一提交的多次本地改动。
 - 日志在 `~/Library/Logs/Qingjian/`（按天分文件留 7 天，删了会重建），用户数据与配置在 `~/Library/Application Support/Qingjian/`。
 - 配置项：云联想 `[predict]`（偏好设置「云服务」页有「测试连接」按钮：`qingjian_predict::ConnectionTest` 起线程发一条最小请求，`Host` 用独立定时器 `CloudTestMonitor` 轮询结果显示到窗口底部；
   `reasoning_effort` 缺省 `none`，DeepSeek V4 默认思考，不关正文为空）；模糊音 `[fuzzy]` 默认都关；`[general]` 学习语言（`off` 不显示译文）/ 每页候选数 / 翻页键 / 外观 / 竖排横排 / 拼音显示位置 /

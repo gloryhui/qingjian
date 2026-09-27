@@ -1,4 +1,4 @@
-//! 输入法进程没有终端，日志只写文件：`~/Library/Logs/Qingjian/qingjian.log.<日期>`。
+//! 输入法进程没有终端，日志只写文件：`~/Library/Logs/<版本目录>/qingjian.log.<日期>`。
 //!
 //! 按天分文件，只留最近 [`KEEP_DAYS`] 天；文件被用户删掉后下一条日志会重新建（`tracing_appender::rolling`
 //! 一直握着旧文件描述符，删掉后日志会写进已经不在目录里的 inode，看起来就是「日志文件始终不出现」）。
@@ -76,7 +76,11 @@ fn filter_for(level: LogLevel) -> EnvFilter {
 
 /// 日志目录，菜单「打开日志目录」也用。
 pub fn log_dir() -> Option<PathBuf> {
-    std::env::var_os("HOME").map(|home| PathBuf::from(home).join("Library/Logs/Qingjian"))
+    std::env::var_os("HOME").map(|home| {
+        PathBuf::from(home)
+            .join("Library/Logs")
+            .join(super::bundle::user_directory_name())
+    })
 }
 
 /// 把日志目录里的文件加 `config.toml` 打成桌面上的 `qingjian-logs-<日期>.zip`（`zip -j`，不带目录层级），返回 zip 路径。

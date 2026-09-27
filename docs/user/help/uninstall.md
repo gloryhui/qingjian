@@ -20,6 +20,14 @@ description: 卸载青简、连同学习数据一起删除、只清除输入日�
 
 此命令删除「~/Library/Application Support/Qingjian/」中的全部内容，包括导入的词库、学习到的词、输入日志、配置与密钥。
 
+如果安装的是可共存的「青简测试版」，使用测试版自己的卸载命令：
+
+```sh
+/Library/Input\ Methods/QingjianTest.app/Contents/Resources/uninstall.sh
+```
+
+加 `--purge` 只删除测试版在 `QingjianTest` 目录中的数据和日志，原版「青简」保留。
+
 ## Windows
 
 在「设置 → 应用 → 安装的应用」中找到「青简」并卸载，或使用开始菜单的「卸载青简」。

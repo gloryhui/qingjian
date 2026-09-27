@@ -17,6 +17,9 @@ description: 青简在本机保存的文件及其内容、云联想发送的内�
 - **macOS**：「~/Library/Application Support/Qingjian/」（访达中按 `⇧⌘G` 输入此路径）。
 - **Windows**：「%APPDATA%\Qingjian」（在资源管理器地址栏中直接输入此路径）。
 
+macOS 共存测试包「青简测试版」使用 `~/Library/Application Support/QingjianTest/`，运行日志在 `~/Library/Logs/QingjianTest/`。
+与「青简」的数据独立，卸载或清空测试版数据不会影响原版。
+
 均为纯文本，可随时打开查看：
 
 | 文件 | 内容 | 是否含输入内容 |

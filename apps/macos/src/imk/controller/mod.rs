@@ -6,7 +6,7 @@
 use objc2::rc::{Allocated, Retained};
 use objc2::runtime::{AnyObject, Sel};
 use objc2::{define_class, msg_send, sel};
-use objc2_app_kit::{NSEvent, NSEventModifierFlags, NSEventType, NSMenu};
+use objc2_app_kit::{NSEvent, NSEventMask, NSEventModifierFlags, NSEventType, NSMenu};
 use objc2_foundation::NSObjectProtocol;
 use objc2_input_method_kit::{IMKInputController, IMKServer};
 use qingjian_core::{Candidate, QUESTION_PREFIX};
@@ -26,6 +26,16 @@ mod route;
 mod text;
 mod translate;
 
+#[cfg(test)]
+mod tests;
+
+/// 订阅修饰键后 IMK 不再提供默认的鼠标提交，因此鼠标按下也由控制器收尾并放行。
+const INPUT_EVENTS: NSEventMask = NSEventMask::KeyDown
+    .union(NSEventMask::FlagsChanged)
+    .union(NSEventMask::LeftMouseDown)
+    .union(NSEventMask::RightMouseDown)
+    .union(NSEventMask::OtherMouseDown);
+
 define_class!(
     // SAFETY:
     // - IMKInputController 允许子类化，Apple 文档的标准用法就是继承它。
@@ -37,6 +47,12 @@ define_class!(
     pub struct QingjianInputController;
 
     impl QingjianInputController {
+        /// IMK 默认只发送 KeyDown；必须显式订阅 FlagsChanged 才能收到 Shift 按下 / 抬起。
+        #[unsafe(method(recognizedEvents:))]
+        fn recognized_events(&self, _sender: Option<&AnyObject>) -> usize {
+            INPUT_EVENTS.bits() as usize
+        }
+
         /// IMKServer 为每个新会话调用的指定初始化方法，在这里放好 ivars。
         #[unsafe(method_id(initWithServer:delegate:client:))]
         fn init_with_server(
@@ -206,6 +222,12 @@ impl QingjianInputController {
         // Shift / Ctrl 的按下与抬起只作为 FlagsChanged 送来，单击切换中 / 英要在这里判定（见 [`super::mode`]）
         match event.r#type() {
             NSEventType::FlagsChanged => return self.handle_flags(event, client),
+            NSEventType::LeftMouseDown
+            | NSEventType::RightMouseDown
+            | NSEventType::OtherMouseDown => {
+                self.commit_raw(client);
+                return false;
+            }
             NSEventType::KeyDown => {}
             _ => return false,
         }

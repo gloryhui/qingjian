@@ -4,6 +4,8 @@
 #   scripts/bundle.sh            # 只打包到 target/Qingjian.app
 #   scripts/bundle.sh --install  # 打包并安装到 ~/Library/Input Methods/，杀掉旧进程（开发用）
 #   scripts/bundle.sh --pkg      # 打包并做成 target/pkg/qingjian-<版本>-macos-<arm64|x86_64>.pkg（分发给测试者）
+#   scripts/bundle.sh --test --pkg      # 可与正式版共存的青简测试版，独立数据与日志
+#   scripts/bundle.sh --test --install  # 只安装用户级测试版，不影响正式版进程
 #
 # 架构：缺省编译本机架构；QINGJIAN_TARGET=x86_64-apple-darwin（或 aarch64-apple-darwin）交叉编译另一种，
 # 先 `rustup target add` 一次。CI 在 Apple Silicon runner 上两个都打（.github/workflows/release.yml）。
@@ -22,6 +24,34 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
 APP_NAME="Qingjian"
 BIN_NAME="qingjian-macos"
+PACKAGE_ID="app.qingjian.inputmethod"
+PKG_NAME="qingjian"
+TEST_BUILD=0
+MODE=""
+for arg in "$@"; do
+  case "$arg" in
+    --test) TEST_BUILD=1 ;;
+    --pkg|--install)
+      [[ -z "$MODE" ]] || { echo "--pkg 与 --install 只能选一个" >&2; exit 1; }
+      MODE="$arg" ;;
+    --help|-h)
+      echo "用法: $0 [--test] [--pkg|--install]"
+      exit 0 ;;
+    *) echo "不认识的选项: $arg" >&2; exit 1 ;;
+  esac
+done
+if [[ "$TEST_BUILD" == 1 ]]; then
+  APP_NAME="QingjianTest"
+  BIN_NAME="qingjian-test"
+  PACKAGE_ID="app.qingjian.inputmethod.test"
+  PKG_NAME="qingjian-test"
+fi
+# 只改生成的安装资源；正式版源文件与打包身份不变。
+test_template() {
+  sed -e 's/app\.qingjian\.inputmethod/app.qingjian.inputmethod.test/g' \
+    -e 's/qingjian-macos/qingjian-test/g' -e 's/Qingjian/QingjianTest/g' \
+    -e 's/青简/青简测试版/g' "$1" > "$2"
+}
 PROFILE="${PROFILE:-release}"
 APP="$ROOT/target/$APP_NAME.app"
 INSTALL_DIR="$HOME/Library/Input Methods"
@@ -38,7 +68,7 @@ cd "$ROOT"
 GIT_REV="$(git rev-parse --short HEAD 2>/dev/null || echo unknown)"
 if [[ -n "$(git status --porcelain 2>/dev/null)" ]]; then GIT_REV="${GIT_REV}+"; fi
 export QINGJIAN_BUILD="${GIT_REV} · $(date +%Y-%m-%d)"
-BUILD_ARGS=(-p "$BIN_NAME" --locked)
+BUILD_ARGS=(-p qingjian-macos --locked)
 [[ "$PROFILE" == "release" ]] && BUILD_ARGS+=(--release)
 BIN_DIR="target/$PROFILE"
 if [[ -n "$TARGET" ]]; then
@@ -49,14 +79,22 @@ cargo build "${BUILD_ARGS[@]}"
 
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
-cp "$BIN_DIR/$BIN_NAME" "$APP/Contents/MacOS/$BIN_NAME"
+cp "$BIN_DIR/qingjian-macos" "$APP/Contents/MacOS/$BIN_NAME"
 cp apps/macos/Info.plist "$APP/Contents/Info.plist"
+if [[ "$TEST_BUILD" == 1 ]]; then
+  # 模式字典的键与可见顺序表也要一起换；控制器类名仍是二进制内的 QingjianInputController。
+  sed 's/app\.qingjian\.inputmethod/app.qingjian.inputmethod.test/g' \
+    apps/macos/Info.plist > "$APP/Contents/Info.plist"
+  /usr/libexec/PlistBuddy -c "Set :CFBundleExecutable $BIN_NAME" \
+    -c "Set :CFBundleName $APP_NAME" -c "Set :CFBundleDisplayName 青简测试版" "$APP/Contents/Info.plist"
+fi
 # 版本号来自 apps/macos/Cargo.toml（各平台壳版本号独立，不跟 workspace 走），构建号用提交数（单调递增，pkg 升级判断靠它）。
 # 发版之间版本号带 -dev（0.1.2-dev）：本地与 CI 中间构建一眼能与线上包区分；发版提交去掉 -dev 再打标签（docs/notes/release.md）。
 # 开发版再接上 git 短哈希（0.1.3-dev-1a2b3c4，工作区有改动加 +），测试时一眼知道装的是哪个提交；Cargo.toml 里仍只写 -dev。
 # pkgbuild / distribution 的 version 只认数字点号，去掉预发布后缀；Info.plist 与 pkg 文件名保留完整版本
 VERSION="$(sed -n 's/^version = "\(.*\)"/\1/p' apps/macos/Cargo.toml | head -1)"
 if [[ "$VERSION" == *-dev ]]; then VERSION="${VERSION}-${GIT_REV}"; fi
+if [[ "$TEST_BUILD" == 1 ]]; then VERSION="${VERSION}-test-$(date +%Y%m%d%H%M%S)"; fi
 PKG_VERSION="${VERSION%%-*}"
 BUILD_NUMBER="$(git rev-list --count HEAD 2>/dev/null || echo 1)"
 /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $VERSION" \
@@ -65,6 +103,15 @@ BUILD_NUMBER="$(git rev-list --count HEAD 2>/dev/null || echo 1)"
 cp apps/macos/scripts/uninstall.sh "$APP/Contents/Resources/uninstall.sh"
 # 输入源名字按系统语言本地化（中文系统显示「青简」，其他显示 Qingjian）
 cp -R apps/macos/resources/*.lproj "$APP/Contents/Resources/"
+if [[ "$TEST_BUILD" == 1 ]]; then
+  test_template apps/macos/scripts/uninstall.sh "$APP/Contents/Resources/uninstall.sh"
+  for strings in "$APP/Contents/Resources/"*.lproj/InfoPlist.strings; do
+    locale="$(basename "$(dirname "$strings")")"
+    sed -e 's/app\.qingjian\.inputmethod/app.qingjian.inputmethod.test/g' \
+      -e 's/"Qingjian"/"Qingjian Test"/g' -e 's/"青简"/"青简测试版"/g' \
+      "apps/macos/resources/$locale/InfoPlist.strings" > "$strings"
+  done
+fi
 # 词库与释义表打进 Resources。data/generated/ 里有生成好的产品数据（自建词库 + 语言模型 + LLM 释义表）就用它，
 # 否则用 assets/sample/ 的样例。没有数据管道的机器跑 tools/release/data-fetch.sh 按 tools/release/data.lock 下载。
 cp assets/sample/*.tsv "$APP/Contents/Resources/"
@@ -152,12 +199,16 @@ else
 fi
 echo "打包完成: ${APP}（版本 ${VERSION}，构建 ${BUILD_NUMBER}，${ARCH}）"
 
-if [[ "${1:-}" == "--pkg" ]]; then
+if [[ "$MODE" == "--pkg" ]]; then
   # 每个架构一个工作目录，成品都放 target/pkg/，两个架构接着打互不覆盖
-  PKG="$ROOT/target/pkg/qingjian-$VERSION-macos-$ARCH.pkg"
-  PKG_DIR="$ROOT/target/pkg/$ARCH"
+  PKG="$ROOT/target/pkg/$PKG_NAME-$VERSION-macos-$ARCH.pkg"
+  PKG_DIR="$ROOT/target/pkg/$PKG_NAME-$ARCH"
   rm -rf "$PKG_DIR"
   mkdir -p "$PKG_DIR/root" "$PKG_DIR/resources"
+  cp -R apps/macos/pkg/scripts "$PKG_DIR/scripts"
+  if [[ "$TEST_BUILD" == 1 ]]; then
+    test_template apps/macos/pkg/scripts/postinstall "$PKG_DIR/scripts/postinstall"
+  fi
   # 不带扩展属性复制，否则载荷里全是 ._ 元数据文件
   ditto --noextattr --norsrc --noacl "$APP" "$PKG_DIR/root/$APP_NAME.app"
   # 组件描述里关掉 bundle 重定位：否则机器上别处已有同 bundle id 的 .app（比如 ~/Library 下的开发副本）时，
@@ -166,12 +217,19 @@ if [[ "${1:-}" == "--pkg" ]]; then
   /usr/libexec/PlistBuddy -c "Set :0:BundleIsRelocatable false" "$PKG_DIR/component.plist" 2>/dev/null || \
     /usr/libexec/PlistBuddy -c "Add :0:BundleIsRelocatable bool false" "$PKG_DIR/component.plist"
   pkgbuild --root "$PKG_DIR/root" --component-plist "$PKG_DIR/component.plist" \
-    --install-location "/Library/Input Methods" --scripts apps/macos/pkg/scripts \
-    --identifier app.qingjian.inputmethod --version "$PKG_VERSION" "$PKG_DIR/$APP_NAME-component.pkg" >/dev/null
+    --install-location "/Library/Input Methods" --scripts "$PKG_DIR/scripts" \
+    --identifier "$PACKAGE_ID" --version "$PKG_VERSION" "$PKG_DIR/$APP_NAME-component.pkg" >/dev/null
   cp apps/macos/pkg/resources/*.html "$PKG_DIR/resources/"
   cp LICENSE "$PKG_DIR/resources/license.txt"
   # 二进制只有一种架构，hostArchitectures 限定只在对应机器上装；另一种架构用 QINGJIAN_TARGET 再打一份
   sed -e "s/@VERSION@/$VERSION/g" -e "s/@PKG_VERSION@/$PKG_VERSION/g" -e "s/@ARCH@/$ARCH/g" apps/macos/pkg/distribution.xml > "$PKG_DIR/distribution.xml"
+  if [[ "$TEST_BUILD" == 1 ]]; then
+    for html in apps/macos/pkg/resources/*.html; do
+      test_template "$html" "$PKG_DIR/resources/$(basename "$html")"
+    done
+    test_template "$PKG_DIR/distribution.xml" "$PKG_DIR/distribution-test.xml"
+    mv "$PKG_DIR/distribution-test.xml" "$PKG_DIR/distribution.xml"
+  fi
   SIGN_ARGS=()
   if [[ -n "${QINGJIAN_INSTALLER_IDENTITY:-}" ]]; then
     SIGN_ARGS=(--sign "$QINGJIAN_INSTALLER_IDENTITY" --timestamp)
@@ -190,9 +248,9 @@ if [[ "${1:-}" == "--pkg" ]]; then
   shasum -a 256 "$PKG"
 fi
 
-if [[ "${1:-}" == "--install" ]]; then
+if [[ "$MODE" == "--install" ]]; then
   if [[ -d "/Library/Input Methods/$APP_NAME.app" ]]; then
-    echo "注意: /Library/Input Methods/$APP_NAME.app 也装着一份（pkg 装的），两份同 id 会互相顶；先跑 scripts/uninstall.sh"
+    echo "注意: /Library/Input Methods/$APP_NAME.app 也装着一份（pkg 装的），两份同 id 会互相顶；先运行该 app 的 Contents/Resources/uninstall.sh"
   fi
   mkdir -p "$INSTALL_DIR"
   rm -rf "$INSTALL_DIR/$APP_NAME.app"
@@ -200,5 +258,5 @@ if [[ "${1:-}" == "--install" ]]; then
   # 系统会在下次切换到该输入法时重新拉起进程
   pkill -x "$BIN_NAME" 2>/dev/null || true
   echo "已安装到: $INSTALL_DIR/$APP_NAME.app"
-  echo "日志: ~/Library/Logs/Qingjian/"
+  echo "日志: ~/Library/Logs/$APP_NAME/"
 fi

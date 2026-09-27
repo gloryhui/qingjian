@@ -2,7 +2,11 @@
 //!
 //! 判定本身在 [`crate::host::ModeState`]（纯状态机，可单测），这里只做「事件 → 按下 / 抬起」和收尾。
 
-use super::*;
+use objc2_app_kit::{NSEvent, NSEventModifierFlags};
+
+use super::QingjianInputController;
+use crate::host;
+use crate::imk::{TextClient, modifiers};
 
 impl QingjianInputController {
     /// 一次修饰键按下 / 抬起（`FlagsChanged`）：喂给单击状态机，抬起时命中单击就翻中 / 英。
@@ -21,6 +25,7 @@ impl QingjianInputController {
             flipped
         })
         .unwrap_or(false);
+        tracing::debug!(key_code = event.keyCode(), ?flags, flipped, "修饰键事件");
         if flipped {
             self.switch_language(client);
         }
@@ -42,6 +47,6 @@ impl QingjianInputController {
             h.indicator.update(h.mode.english());
             h.mode.english()
         });
-        tracing::debug!(?english, "切换中英模式");
+        tracing::info!(?english, "切换中英模式");
     }
 }

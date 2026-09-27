@@ -6,6 +6,14 @@ description: macOS 与 Windows 的安装步骤：系统要求、安装包、首�
 
 ## macOS
 
+### 与现有青简共存测试
+
+名称以 `qingjian-test-` 开头的安装包会安装「青简测试版」，可与已有的「青简」同时保留。在输入法菜单里选择对应名称即可切换。
+测试版使用独立的设置、导入词库与学习数据，不会读取或修改原版的数据；初次使用需要重新设置或导入词库。
+测试版数据保存在 `~/Library/Application Support/QingjianTest/`，日志保存在 `~/Library/Logs/QingjianTest/`。
+
+### 常规安装
+
 **系统要求**：macOS 13 或更新。Apple Silicon 与 Intel 各有一个安装包；不确定机型时，点左上角  → 「关于本机」，查看「芯片」一行。
 
 1. 下载 `qingjian-<版本>-macos-arm64.pkg`（Apple Silicon）或 `qingjian-<版本>-macos-x86_64.pkg`（Intel），双击安装，需要管理员密码。

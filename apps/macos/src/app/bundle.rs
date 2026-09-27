@@ -1,3 +1,5 @@
+//! 主 bundle 的输入法身份与正式版 / 测试版的数据目录名称。
+
 use objc2_foundation::{NSBundle, NSString};
 
 /// 从主 bundle 的 Info.plist 读出的输入法身份信息。
@@ -47,3 +49,31 @@ impl BundleInfo {
 
 /// 与 `Info.plist` 里的 `CFBundleIdentifier` 保持一致。
 pub(crate) const DEFAULT_IDENTIFIER: &str = "app.qingjian.inputmethod";
+
+/// 由安装包身份选择数据与日志目录，不依赖启动进程的环境变量。
+pub fn user_directory_name() -> &'static str {
+    let identifier = NSBundle::mainBundle().bundleIdentifier();
+    directory_name(identifier.as_ref().map(|id| id.to_string()).as_deref())
+}
+
+fn directory_name(identifier: Option<&str>) -> &'static str {
+    match identifier {
+        Some("app.qingjian.inputmethod.test") => "QingjianTest",
+        _ => "Qingjian",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{DEFAULT_IDENTIFIER, directory_name};
+
+    #[test]
+    fn test_bundle_uses_separate_user_directory() {
+        assert_eq!(
+            directory_name(Some("app.qingjian.inputmethod.test")),
+            "QingjianTest"
+        );
+        assert_eq!(directory_name(Some(DEFAULT_IDENTIFIER)), "Qingjian");
+        assert_eq!(directory_name(None), "Qingjian");
+    }
+}
