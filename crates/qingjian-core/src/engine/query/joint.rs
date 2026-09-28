@@ -1,7 +1,7 @@
 //! 多种拼音切分共享整句评分和神经重排，首选切分随首选候选返回。
 
 use crate::candidate::{Candidate, CandidateKind};
-use crate::engine::{Engine, Learner, RESCORE_PATHS, choice_key};
+use crate::engine::{Engine, Learner, RESCORE_PATHS};
 use crate::parser::Segmentation;
 use crate::sentence::diversity::representative_indices;
 use crate::sentence::{self, Conversion};
@@ -121,7 +121,12 @@ impl Engine {
         if segmentations.first()?.syllables.len() < 2 {
             return None;
         }
+        let typed = segmentations.first()?.joined("");
         let (index, conversion) = self.best_joint_sentence(segmentations, items, typos)?;
+        if self.should_prefer_complete_word(items, &conversion, &typed) {
+            align_first_chinese_segmentation(items, segmentations);
+            return None;
+        }
         if conversion.word_count() == 1 && !conversion.altered() {
             // 单音节输入的词级排序已有独立依据；只在多音节切分歧义确实被
             // 另一条完整切分的词汇证据推翻时提升词候选。
@@ -133,10 +138,7 @@ impl Engine {
                 let ranked_full_word = items
                     .iter()
                     .find(|candidate| candidate.kind == CandidateKind::Chinese)
-                    .is_some_and(|candidate| {
-                        candidate.syllables.concat()
-                            == choice_key(self.composition.scope(), self.composition.scope().len())
-                    });
+                    .is_some_and(|candidate| candidate.syllables.concat() == typed);
                 let promote = !ranked_full_word
                     && index > 0
                     && segmentations[0].syllables.len() >= 2
@@ -307,6 +309,7 @@ mod tests {
                 .collect(),
             score,
             static_score,
+            personal_bonus: 0.0,
             penalty,
         }
     }

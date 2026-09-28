@@ -5,6 +5,8 @@ use std::sync::{Arc, Mutex};
 use super::*;
 use crate::sentence::{LanguageModel, SentenceScorer};
 
+mod complete_word;
+
 fn real_dictionary() -> Dictionary {
     let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets/lexicon/dict.tsv");
     Dictionary::from_path(path).unwrap()
