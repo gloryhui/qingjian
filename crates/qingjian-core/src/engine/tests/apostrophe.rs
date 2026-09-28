@@ -30,6 +30,26 @@ fn selecting_a_prefix_word_consumes_its_following_separators() {
 }
 
 #[test]
+fn selecting_a_prefix_word_without_a_separator_keeps_the_same_remainder() {
+    let mut engine = apostrophe_engine();
+    engine.set_input("kaifa");
+    let first = engine
+        .query()
+        .unwrap()
+        .candidates
+        .items
+        .into_iter()
+        .find(|candidate| candidate.text == "开")
+        .unwrap();
+
+    assert_eq!(engine.commit(&first), "开");
+    assert_eq!(engine.composition().text(), "fa");
+    let next = engine.query().unwrap().candidates.items[0].clone();
+    assert_eq!(engine.commit(&next), "发");
+    assert!(engine.composition().is_empty());
+}
+
+#[test]
 fn selecting_a_full_word_across_repeated_separators_clears_the_buffer() {
     for input in ["kai'fa", "kai''fa", "'kai'''fa'"] {
         let mut engine = apostrophe_engine();
