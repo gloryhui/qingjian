@@ -71,11 +71,10 @@ fn typo_edges_in_the_lattice_correct_legal_but_unlikely_pinyin() {
     let mut engine = Engine::new(dictionary);
     engine.set_input("jineng");
     let query = engine.query().unwrap();
-    assert_eq!(query.segmentations[0].joined("'"), "jin'eng");
+    assert_eq!(query.segmentations[0].joined("'"), "ji'neng");
     assert_eq!(query.candidates.items[0].text, "技能");
     assert!(query.candidates.items.iter().all(|c| c.text != "近藤"));
-    // 退回原样的路径时原样的整句照出：shude 词图里 是的（shu → shi 相邻键）赢，但 树德 正好拼成 shude，
-    // 于是整句退回 属的
+    // 整段成词时敲错读法与无个人加分的静态组合都要让位。
     let dictionary = Dictionary::parse(
             "树德\tshu de\t500\n是的\tshi de\t5000000\n属\tshu\t100000\n的\tde\t8000000\n是\tshi\t7000000\n",
         )
@@ -83,9 +82,10 @@ fn typo_edges_in_the_lattice_correct_legal_but_unlikely_pinyin() {
     let mut engine = Engine::new(dictionary);
     engine.set_input("shude");
     let query = engine.query().unwrap();
-    assert_eq!(query.candidates.items[0].text, "属的");
-    assert_eq!(query.candidates.items[0].kind, CandidateKind::Sentence);
+    assert_eq!(query.candidates.items[0].text, "树德");
+    assert_eq!(query.candidates.items[0].kind, CandidateKind::Chinese);
     assert!(query.candidates.items.iter().all(|c| c.text != "是的"));
+    assert!(query.candidates.items.iter().all(|c| c.text != "属的"));
 }
 
 /// 模糊音命中的词按敲的字母消耗拼音（`zi` 对 `zhi`），不算敲错。

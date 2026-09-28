@@ -1,0 +1,83 @@
+第一次输入	diyicishuru	title: 
+中英切换	zhongyingqiehuan	description: 
+整句输入	zhengjushuru	description: 中英切换、选词、翻页、
+选错后的退回	xuancuohoudetuihui	description: 中英切换、选词、翻页、整句输入、
+以及中文标点的输入	yijizhongwenbiaodiandeshuru	description: 中英切换、选词、翻页、整句输入、选错后的退回，
+按下即松开	anxiajisongkai	- **macOS**：单击 `Shift`（
+中间没敲别的键	zhongjianmeiqiaobiedejian	- **macOS**：单击 `Shift`（按下即松开、
+菜单栏的状态项显示	caidanlandezhuangtaixiangxianshi	- **macOS**：单击 `Shift`（按下即松开、中间没敲别的键）切中 / 英，
+这类组合照常打大写	zheleizuhezhaochangdadaxie	*：单击 `Shift`（按下即松开、中间没敲别的键）切中 / 英，菜单栏的状态项显示「中」或「英」。`Shift + 字母` 
+不会切模式	buhuiqiemoshi	t`（按下即松开、中间没敲别的键）切中 / 英，菜单栏的状态项显示「中」或「英」。`Shift + 字母` 这类组合照常打大写，
+只控制大小写	zhikongzhidaxiaoxie	macOS 上的 `Caps Lock` 
+不与其他键组合	buyuqitajianzuhe	- **Windows**：单击 `Shift`（按下即松开，
+任务栏右下同步显示	renwulanyouxiatongbuxianshi	- **Windows**：单击 `Shift`（按下即松开，不与其他键组合），
+亮着时显示	liangzheshixianshi	*Windows**：单击 `Shift`（按下即松开，不与其他键组合），任务栏右下同步显示「中」或「英」，Caps Lock 
+点击该图标同样可以切换	dianjigaitubiaotongyangkeyiqiehuan	*：单击 `Shift`（按下即松开，不与其他键组合），任务栏右下同步显示「中」或「英」，Caps Lock 亮着时显示「A」；
+英文模式下的行为见	yingwenmoshixiadexingweijian	
+英文模式	yingwenmoshi	英文模式下的行为见 [
+候选窗口	houxuanchuangkou	## 
+输入拼音时	shurupinyinshi	
+候选窗口显示在光标下方	houxuanchuangkouxianshizaiguangbiaoxiafang	输入拼音时，
+顶部一行是已输入的拼音	dingbuyixingshiyishurudepinyin	输入拼音时，候选窗口显示在光标下方：
+自动按音节分隔	zidonganyinjiefenge	输入拼音时，候选窗口显示在光标下方：顶部一行是已输入的拼音（
+其下是候选	qixiashihouxuan	输入拼音时，候选窗口显示在光标下方：顶部一行是已输入的拼音（自动按音节分隔），
+右下角是页码	youxiajiaoshiyema	输入拼音时，候选窗口显示在光标下方：顶部一行是已输入的拼音（自动按音节分隔），其下是候选，
+缺省竖排	queshengshupai	输入拼音时，候选窗口显示在光标下方：顶部一行是已输入的拼音（自动按音节分隔），其下是候选，右下角是页码。
+均可在设置中修改	junkezaishezhizhongxiugai	输入拼音时，候选窗口显示在光标下方：顶部一行是已输入的拼音（自动按音节分隔），其下是候选，右下角是页码。缺省竖排，每页 9 个，
+候选右侧字号较小	houxuanyoucezihaojiaoxiao	
+颜色较浅的一列是译词	yansejiaoqiandeyilieshiyici	候选右侧字号较小、
+译词与生词	yiciyushengci	候选右侧字号较小、颜色较浅的一列是译词，见 [
+无需切换模式	wuxuqiehuanmoshi	
+连续输入整句后再上屏	lianxushuruzhengjuhouzaishangping	无需切换模式，
+的首选即为	deshouxuanjiwei	无需切换模式，连续输入整句后再上屏：`jintiantianqihenhao` 
+今天天气很好	jintiantianqihenhao	无需切换模式，连续输入整句后再上屏：`jintiantianqihenhao` 的首选即为「
+简拼同样可用	jianpintongyangkeyong	无需切换模式，连续输入整句后再上屏：`jintiantianqihenhao` 的首选即为「今天天气很好」。
+两三个字母的简拼通常仍按词处理	liangsangezimudejianpintongchangrengancichuli	
+需要整句时请多输入几个音节	xuyaozhengjushiqingduoshurujigeyinjie	两三个字母的简拼通常仍按词处理（`sj` 时间），
+常用按键	changyonganjian	## 
+上屏首选	shangpingshouxuan	| 
+或高亮候选	huogaolianghouxuan	| 上屏首选（
+上屏第	shangpingdi	| 
+个候选	gehouxuan	| 上屏第 N 
+将拼音字母原样上屏	jiangpinyinzimuyuanyangshangping	| 
+移动高亮	yidonggaoliang	| 
+删除一个字母	shanchuyigezimu	| 
+完整按键表	wanzhenganjianbiao	
+两个平台并列	lianggepingtaibinglie	完整按键表（
+按键与快捷键	anjianyukuaijiejian	完整按键表（两个平台并列）见 [
+中文标点	zhongwenbiaodian	## 
+未输入拼音时	weishurupinyinshi	
+中文模式下输入	zhongwenmoshixiashuru	未输入拼音时，
+得到全角标点	dedaoquanjiaobiaodian	未输入拼音时，中文模式下输入 `, . ? ! : ; ( ) [ ] < > \ ^ _ $ ~` 
+成对切换	chengduiqiehuan	入拼音时，中文模式下输入 `, . ? ! : ; ( ) [ ] < > \ ^ _ $ ~` 得到全角标点，`"` `'` 
+数字之后的	shuzizhihoude	中文模式下输入 `, . ? ! : ; ( ) [ ] < > \ ^ _ $ ~` 得到全角标点，`"` `'` 成对切换；
+保持半角	baochibanjiao	 . ? ! : ; ( ) [ ] < > \ ^ _ $ ~` 得到全角标点，`"` `'` 成对切换；数字之后的 `.` 
+要在拼音之后接全角标点	yaozaipinyinzhihoujiequanjiaobiaodian	
+上屏再输入标点	shangpingzaishurubiaodian	要在拼音之后接全角标点，先按 `Space` 
+输入拼音过程中输入标点会进入英文直输	shurupinyinguochengzhongshurubiaodianhuijinruyingwenzhishu	要在拼音之后接全角标点，先按 `Space` 上屏再输入标点；
+快捷输入	kuaijieshuru	要在拼音之后接全角标点，先按 `Space` 上屏再输入标点；输入拼音过程中输入标点会进入英文直输，见 [
+中英混输	zhongyinghunshu	pace` 上屏再输入标点；输入拼音过程中输入标点会进入英文直输，见 [快捷输入](../input/shortcuts.md#
+上可关闭全角转换	shangkeguanbiquanjiaozhuanhuan	Windows 
+中文模式标点转全角	zhongwenmoshibiaodianzhuanquanjiao	Windows 上可关闭全角转换：「设置 → 通用」的「
+或点击悬浮状态条上的	huodianjixuanfuzhuangtaitiaoshangde	Windows 上可关闭全角转换：「设置 → 通用」的「中文模式标点转全角」，
+英文模式另有一份设置	yingwenmoshilingyouyifenshezhi	Windows 上可关闭全角转换：「设置 → 通用」的「中文模式标点转全角」，或点击悬浮状态条上的「，。」格。
+缺省半角	queshengbanjiao	ndows 上可关闭全角转换：「设置 → 通用」的「中文模式标点转全角」，或点击悬浮状态条上的「，。」格。英文模式另有一份设置，
+需要全角时在英文模式下点击该格	xuyaoquanjiaoshizaiyingwenmoshixiadianjigaige	 上可关闭全角转换：「设置 → 通用」的「中文模式标点转全角」，或点击悬浮状态条上的「，。」格。英文模式另有一份设置，缺省半角；
+或打开	huodakai	通用」的「中文模式标点转全角」，或点击悬浮状态条上的「，。」格。英文模式另有一份设置，缺省半角；需要全角时在英文模式下点击该格，
+英文模式标点转全角	yingwenmoshibiaodianzhuanquanjiao	「中文模式标点转全角」，或点击悬浮状态条上的「，。」格。英文模式另有一份设置，缺省半角；需要全角时在英文模式下点击该格，或打开「
+选错了词	xuancuoleci	## 
+上屏后用	shangpinghouyong	
+再输入同一段拼音改选其他候选	zaishurutongyiduanpinyingaixuanqitahouxuan	上屏后用 `Backspace` 删除，
+上一次记录的学习会被撤销	shangyicijiludexuexihuibeichexiao	上屏后用 `Backspace` 删除，再输入同一段拼音改选其他候选，
+选中错词不会被输入法记住	xuanzhongcuocibuhuibeishurufajizhu	上屏后用 `Backspace` 删除，再输入同一段拼音改选其他候选，上一次记录的学习会被撤销；误按 `Space` 
+连续删除后面几个词再从头重输同样有效	lianxushanchuhoumianjigecizaicongtouzhongshutongyangyouxiao	
+沃德书	wodeshu	连续删除后面几个词再从头重输同样有效：删除「
+后重输为	houzhongshuwei	连续删除后面几个词再从头重输同样有效：删除「沃德书」
+我的书	wodeshu	连续删除后面几个词再从头重输同样有效：删除「沃德书」后重输为「
+那次选择视为未发生	nacixuanzeshiweiweifasheng	连续删除后面几个词再从头重输同样有效：删除「沃德书」后重输为「我的书」，「沃德」
+一段拼音分几次选完	yiduanpinyinfenjicixuanwan	
+先选一个字	xianxuanyigezi	一段拼音分几次选完（
+剩余部分整句上屏	shengyubufenzhengjushangping	一段拼音分几次选完（先选一个字，
+第二次以同样方式输入时	dierciyitongyangfangshishurushi	一段拼音分几次选完（先选一个字，剩余部分整句上屏），
+合起来的词会被记为用户词	heqilaidecihuibeijiweiyonghuci	一段拼音分几次选完（先选一个字，剩余部分整句上屏），第二次以同样方式输入时，
+此后整段输入直接排在第一位	cihouzhengduanshuruzhijiepaizaidiyiwei	一段拼音分几次选完（先选一个字，剩余部分整句上屏），第二次以同样方式输入时，合起来的词会被记为用户词，
