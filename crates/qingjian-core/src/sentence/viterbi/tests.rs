@@ -180,6 +180,48 @@ fn language_model_decides_between_homophones() {
 }
 
 #[test]
+fn diverse_routes_keep_the_best_scoring_path_for_duplicate_text() {
+    let dictionary = Dictionary::parse(
+        "我\two\t1000\n研究\tyan jiu\t1000\n研究生\tyan jiu sheng\t1000\n生\tsheng\t1000\n声\tsheng\t1000\n",
+    )
+    .unwrap();
+    let paths = convert_paths(
+        &[&dictionary],
+        &complete(&["wo", "yan", "jiu", "sheng"]),
+        false,
+        6,
+        &DuplicateTextModel,
+        Personal::NONE,
+        |_| 0,
+        |_, _| 0.0,
+        &mut SpanCache::default(),
+    );
+    let same_text: Vec<_> = paths
+        .iter()
+        .filter(|path| path.text == "我研究生")
+        .collect();
+    assert_eq!(same_text.len(), 1);
+    assert_eq!(same_text[0].score, -2.0);
+    assert_eq!(same_text[0].static_score, -2.0);
+    assert_eq!(same_text[0].words.len(), 3);
+}
+
+struct DuplicateTextModel;
+
+impl LanguageModel for DuplicateTextModel {
+    fn log_prob(&self, previous: Option<&str>, word: &str) -> Option<f64> {
+        match (previous, word) {
+            (None, "我") => Some(-0.1),
+            (Some("我"), "研究") => Some(-0.1),
+            (Some("我"), "研究生") => Some(-2.9),
+            (Some("研究"), "声") => Some(-0.8),
+            (Some("研究"), "生") => Some(-1.8),
+            _ => None,
+        }
+    }
+}
+
+#[test]
 fn personal_ngram_overrides_static_model_after_two_selections() {
     let dictionary = Dictionary::parse(SAMPLE).unwrap();
     let patterns = complete(&["wo", "xiang"]);

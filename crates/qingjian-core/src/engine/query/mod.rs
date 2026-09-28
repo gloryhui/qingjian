@@ -644,7 +644,7 @@ impl Engine {
         } else {
             1
         };
-        let mut paths = sentence::convert_paths(
+        let groups = sentence::convert_path_groups(
             &dictionaries,
             &expanded.positions(),
             whole,
@@ -655,8 +655,10 @@ impl Engine {
             |index, syllable| expanded.cost(index, syllable),
             &mut self.span_cache.borrow_mut(),
         );
+        let mut paths: Vec<Conversion> = groups.into_iter().flatten().collect();
+        paths.sort_by(|a, b| b.score.total_cmp(&a.score));
         // 与最优路径差得太远的不参与：那种差距多半是个人 n-gram 拉开的。
-        self.retain_neural_eligible(&mut paths, |path| path.score);
+        self.retain_neural_eligible_by_text(&mut paths, |path| &path.text, |path| path.score);
         if paths.len() > 1 {
             self.rescore_paths(&mut paths);
         }

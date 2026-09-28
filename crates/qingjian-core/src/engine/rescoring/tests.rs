@@ -55,7 +55,7 @@ fn margin_uses_true_pool_max_and_total_personal_score() {
     let engine =
         engine().with_sentence_scorer(Box::new(Prefers("弱路径")), Some(1.0), Some(4.0), None);
     let mut paths = vec![path("弱路径", -11.0), path("个人优势路径", -5.0)];
-    engine.retain_neural_eligible(&mut paths, |path| path.score);
+    engine.retain_neural_eligible_by_text(&mut paths, |path| &path.text, |path| path.score);
     assert_eq!(texts(&paths), ["个人优势路径"]);
     engine.rescore_paths(&mut paths);
     assert_eq!(texts(&paths), ["个人优势路径"]);

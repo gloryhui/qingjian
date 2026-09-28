@@ -57,7 +57,7 @@ impl Engine {
         for index in order.into_iter().take(JOINT_SEGMENTATIONS) {
             let segmentation = &segmentations[index];
             let expanded = self.expand_positions(&segmentation.patterns(), typos);
-            let paths = sentence::convert_paths(
+            let path_groups = sentence::convert_path_groups(
                 &dictionaries,
                 &expanded.positions(),
                 false,
@@ -68,8 +68,9 @@ impl Engine {
                 |position, syllable| expanded.cost(position, syllable),
                 &mut self.span_cache.borrow_mut(),
             );
-            let found: Vec<_> = paths
+            let found: Vec<_> = path_groups
                 .into_iter()
+                .flatten()
                 .filter_map(|path| {
                     let trailing_partial = segmentation
                         .syllables
@@ -95,13 +96,19 @@ impl Engine {
         if k == 1 {
             return Some(ranked.remove(0));
         }
-        self.retain_neural_eligible(&mut ranked, |(_, path)| path.score);
-        let selected = select_joint_paths(&ranked, k);
+        self.retain_neural_eligible_by_text(
+            &mut ranked,
+            |(_, path)| &path.text,
+            |(_, path)| path.score,
+        );
+        let mut selected = select_joint_paths(&ranked, k);
         let mut paths: Vec<Conversion> = selected.iter().map(|(_, path)| path.clone()).collect();
-        self.rescore_paths(&mut paths);
-        let best = paths.into_iter().next()?;
-        let index = selected.iter().find(|(_, path)| path.text == best.text)?.0;
-        Some((index, best))
+        self.rescore_path_scores(&mut paths);
+        for ((_, selected_path), rescored_path) in selected.iter_mut().zip(paths) {
+            selected_path.score = rescored_path.score;
+        }
+        selected.sort_by(|left, right| right.1.score.total_cmp(&left.1.score));
+        selected.into_iter().next()
     }
 
     /// 整句胜出的切分成为 preedit 的首选切分；完整词由已有词级候选承载。
@@ -190,66 +197,83 @@ fn align_first_chinese_segmentation(items: &[Candidate], segmentations: &mut [Se
 
 /// 两种切分轮流取各自词路径的分歧代表，再按总分填满剩余名额。
 fn select_joint_paths(ranked: &[(usize, Conversion)], k: usize) -> Vec<(usize, Conversion)> {
-    let mut groups: Vec<usize> = Vec::new();
-    for (segmentation, _) in ranked {
-        if !groups.contains(segmentation) {
-            groups.push(*segmentation);
+    let mut text_groups: Vec<(String, Vec<usize>)> = Vec::new();
+    for (index, (_, path)) in ranked.iter().enumerate() {
+        if let Some((_, indices)) = text_groups.iter_mut().find(|(text, _)| text == &path.text) {
+            indices.push(index);
+        } else {
+            text_groups.push((path.text.clone(), vec![index]));
         }
     }
-    let representatives: Vec<Vec<usize>> = groups
+    let mut segmentation_groups: Vec<(usize, Vec<usize>, Vec<String>)> = Vec::new();
+    for (segmentation, path) in ranked {
+        let text_index = text_groups
+            .iter()
+            .position(|(text, _)| text == &path.text)
+            .expect("every ranked path has a text group");
+        let group = if let Some(group) = segmentation_groups
+            .iter_mut()
+            .find(|(seen, _, _)| seen == segmentation)
+        {
+            group
+        } else {
+            segmentation_groups.push((*segmentation, Vec::new(), Vec::new()));
+            segmentation_groups.last_mut().expect("just inserted")
+        };
+        if !group.1.contains(&text_index) {
+            group.1.push(text_index);
+            group.2.push(
+                path.words
+                    .iter()
+                    .map(|word| word.text.as_str())
+                    .collect::<Vec<_>>()
+                    .join("\0"),
+            );
+        }
+    }
+    let representatives: Vec<Vec<usize>> = segmentation_groups
         .iter()
-        .map(|segmentation| {
-            let indices: Vec<usize> = ranked
-                .iter()
-                .enumerate()
-                .filter_map(|(index, (seen, _))| (seen == segmentation).then_some(index))
-                .collect();
-            let routes: Vec<String> = indices
-                .iter()
-                .map(|index| {
-                    ranked[*index]
-                        .1
-                        .words
-                        .iter()
-                        .map(|word| word.text.as_str())
-                        .collect::<Vec<_>>()
-                        .join("\0")
-                })
-                .collect();
+        .map(|(_, text_indices, routes)| {
             let refs: Vec<&str> = routes.iter().map(String::as_str).collect();
             representative_indices(&refs, k)
                 .into_iter()
-                .map(|index| indices[index])
+                .map(|index| text_indices[index])
                 .collect()
         })
         .collect();
-    let mut selected = Vec::new();
+    let mut selected_groups = Vec::new();
     let mut round = 0;
-    while selected.len() < k && representatives.iter().any(|group| group.len() > round) {
+    while selected_groups.len() < k && representatives.iter().any(|group| group.len() > round) {
         for group in &representatives {
-            if let Some(&index) = group.get(round) {
-                let path = &ranked[index];
-                if !selected
-                    .iter()
-                    .any(|(_, seen): &(usize, Conversion)| seen.text == path.1.text)
-                {
-                    selected.push(path.clone());
-                    if selected.len() == k {
-                        break;
-                    }
+            if let Some(&text_index) = group.get(round)
+                && !selected_groups.contains(&text_index)
+            {
+                selected_groups.push(text_index);
+                if selected_groups.len() == k {
+                    break;
                 }
             }
         }
         round += 1;
     }
-    for path in ranked {
-        if selected.len() >= k {
+    for text_index in 0..text_groups.len() {
+        if selected_groups.len() >= k {
             break;
         }
-        if !selected.iter().any(|(_, seen)| seen.text == path.1.text) {
-            selected.push(path.clone());
+        if !selected_groups.contains(&text_index) {
+            selected_groups.push(text_index);
         }
     }
+    let mut selected: Vec<(usize, Conversion)> = selected_groups
+        .into_iter()
+        .flat_map(|text_index| {
+            text_groups[text_index]
+                .1
+                .iter()
+                .map(|index| ranked[*index].clone())
+        })
+        .collect();
+    selected.sort_by(|left, right| right.1.score.total_cmp(&left.1.score));
     selected
 }
 
@@ -257,26 +281,33 @@ fn select_joint_paths(ranked: &[(usize, Conversion)], k: usize) -> Vec<(usize, C
 mod tests {
     use super::*;
     use crate::sentence::SentenceWord;
+    use qingjian_dictionary::Dictionary;
 
     fn path(text: &str, first: &str, score: f64) -> Conversion {
+        route(text, &[first, text], score, score, 0.0)
+    }
+
+    fn route(
+        text: &str,
+        words: &[&str],
+        score: f64,
+        static_score: f64,
+        penalty: f64,
+    ) -> Conversion {
         Conversion {
             text: text.to_owned(),
             syllables: Vec::new(),
-            words: vec![
-                SentenceWord {
-                    text: first.to_owned(),
+            words: words
+                .iter()
+                .map(|word| SentenceWord {
+                    text: (*word).to_owned(),
                     syllables: Vec::new(),
                     placeholder: false,
-                },
-                SentenceWord {
-                    text: text.to_owned(),
-                    syllables: Vec::new(),
-                    placeholder: false,
-                },
-            ],
+                })
+                .collect(),
             score,
-            static_score: score,
-            penalty: 0.0,
+            static_score,
+            penalty,
         }
     }
 
@@ -310,7 +341,44 @@ mod tests {
                 .iter()
                 .filter(|(_, path)| path.text == "A1")
                 .count(),
-            1
+            2
         );
+    }
+
+    struct ConstantScorer;
+
+    impl crate::sentence::SentenceScorer for ConstantScorer {
+        fn score(&self, _context: &str, texts: &[&str]) -> Vec<f64> {
+            vec![-1.0; texts.len()]
+        }
+    }
+
+    #[test]
+    fn same_text_routes_survive_selection_order_and_keep_path_specific_scores() {
+        let first = (0, route("同句", &["同", "句"], -2.0, -1.0, 0.0));
+        let second = (0, route("同句", &["同句"], -2.2, -4.0, 0.5));
+        let third = (1, route("同句", &["同", "句"], -2.3, -3.0, 0.0));
+        let other = (0, route("别句", &["别", "句"], -3.0, -3.0, 0.0));
+
+        for ranked in [
+            vec![first.clone(), second.clone(), third.clone(), other.clone()],
+            vec![second, first, third, other],
+        ] {
+            let selected = select_joint_paths(&ranked, 1);
+            assert_eq!(selected.len(), 3);
+            assert!(selected.iter().all(|(_, path)| path.text == "同句"));
+
+            let engine = Engine::new(Dictionary::parse("同\ttong\t100\n").unwrap())
+                .with_sentence_scorer(Box::new(ConstantScorer), Some(0.5), None, None);
+            let mut paths: Vec<_> = selected.iter().map(|(_, path)| path.clone()).collect();
+            engine.rescore_paths(&mut paths);
+            assert_eq!(paths[0].words[0].text, "同句");
+            assert!(
+                (paths[0].score + 0.7).abs() < 1e-12,
+                "selected path {:?} has score {}",
+                paths[0].words,
+                paths[0].score
+            );
+        }
     }
 }

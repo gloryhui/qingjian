@@ -109,6 +109,50 @@ fn full_sentence_evidence_can_reverse_an_early_homophone_choice() {
     assert!(seen.lock().unwrap().iter().any(|text| text == "玩都不想玩"));
 }
 
+struct DuplicatePathScorer;
+
+struct DuplicateTextBigram;
+
+impl LanguageModel for DuplicateTextBigram {
+    fn log_prob(&self, previous: Option<&str>, word: &str) -> Option<f64> {
+        match (previous, word) {
+            (None, "我") => Some(-0.1),
+            (Some("我"), "研究") => Some(-0.1),
+            (Some("我"), "研究生") => Some(-2.9),
+            (Some("研究"), "声") => Some(-0.8),
+            (Some("研究"), "生") => Some(-1.8),
+            _ => None,
+        }
+    }
+}
+
+impl SentenceScorer for DuplicatePathScorer {
+    fn score(&self, _context: &str, texts: &[&str]) -> Vec<f64> {
+        texts
+            .iter()
+            .map(|text| match *text {
+                "我研究声" => -2.5,
+                "我研究生" => -1.0,
+                _ => -20.0,
+            })
+            .collect()
+    }
+}
+
+#[test]
+fn neural_rescore_keeps_the_best_same_text_path_after_terminal_diversity() {
+    let dictionary = Dictionary::parse(
+        "我\two\t1000\n研究\tyan jiu\t1000\n研究生\tyan jiu sheng\t1000\n生\tsheng\t1000\n声\tsheng\t1000\n",
+    )
+    .unwrap();
+    let mut engine = Engine::new(dictionary)
+        .with_language_model(Box::new(DuplicateTextBigram))
+        .with_sentence_scorer(Box::new(DuplicatePathScorer), Some(0.5), Some(4.0), None);
+    engine.set_input("wo'yan'jiu'sheng");
+    let query = engine.query().unwrap();
+    assert_eq!(query.candidates.items[0].text, "我研究生");
+}
+
 #[test]
 fn multi_syllable_homophone_path_reaches_whole_sentence_scorer() {
     let seen = Arc::new(Mutex::new(Vec::new()));

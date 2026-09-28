@@ -147,7 +147,37 @@ pub fn convert_paths(
     cost: impl Fn(usize, &str) -> f64,
     cache: &mut SpanCache,
 ) -> Vec<Conversion> {
-    convert_paths_inner(
+    convert_path_groups_inner(
+        dictionaries,
+        positions,
+        keep_partial,
+        k,
+        model,
+        personal,
+        weight,
+        cost,
+        cache,
+        None,
+    )
+    .into_iter()
+    .map(|mut group| group.remove(0))
+    .collect()
+}
+
+/// 返回最多 `k` 种文本；每组保留束内生成的全部词路径，供神经分替换静态分后再选有效路径。
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn convert_path_groups(
+    dictionaries: &[&Dictionary],
+    positions: &[Vec<SyllablePattern<'_>>],
+    keep_partial: bool,
+    k: usize,
+    model: &dyn LanguageModel,
+    personal: Personal<'_>,
+    weight: impl Fn(&str) -> u32,
+    cost: impl Fn(usize, &str) -> f64,
+    cache: &mut SpanCache,
+) -> Vec<Vec<Conversion>> {
+    convert_path_groups_inner(
         dictionaries,
         positions,
         keep_partial,
@@ -175,7 +205,7 @@ pub fn convert_paths_diagnostic(
     cache: &mut SpanCache,
 ) -> (Vec<Conversion>, SearchDiagnostics) {
     let mut diagnostic = SearchDiagnostics::default();
-    let paths = convert_paths_inner(
+    let paths = convert_path_groups_inner(
         dictionaries,
         positions,
         keep_partial,
@@ -187,11 +217,14 @@ pub fn convert_paths_diagnostic(
         cache,
         Some(&mut diagnostic),
     );
-    (paths, diagnostic)
+    (
+        paths.into_iter().map(|mut group| group.remove(0)).collect(),
+        diagnostic,
+    )
 }
 
 #[allow(clippy::too_many_arguments)]
-fn convert_paths_inner(
+fn convert_path_groups_inner(
     dictionaries: &[&Dictionary],
     positions: &[Vec<SyllablePattern<'_>>],
     keep_partial: bool,
@@ -202,7 +235,7 @@ fn convert_paths_inner(
     cost: impl Fn(usize, &str) -> f64,
     cache: &mut SpanCache,
     mut diagnostic: Option<&mut SearchDiagnostics>,
-) -> Vec<Conversion> {
+) -> Vec<Vec<Conversion>> {
     let Some((last, head)) = positions.split_last() else {
         return Vec::new();
     };
@@ -369,28 +402,44 @@ fn convert_paths_inner(
         }
     }
     prune(&mut nodes, n, k > 1, diagnostic);
-    let mut paths: Vec<Conversion> = Vec::with_capacity(k.min(nodes[n].len()));
-    let mut indices: Vec<usize> = (0..nodes[n].len()).collect();
-    if k > 1 {
-        let routes: Vec<&str> = indices
-            .iter()
-            .map(|index| nodes[n][*index].route.as_str())
-            .collect();
-        let mut diverse = representative_indices(&routes, k.div_ceil(2));
-        indices.retain(|index| !diverse.contains(index));
-        diverse.extend(indices);
-        indices = diverse;
-    }
-    for index in indices {
-        if paths.len() >= k {
-            break;
-        }
+    let mut groups: Vec<Vec<Conversion>> = Vec::with_capacity(k.min(nodes[n].len()));
+    for index in 0..nodes[n].len() {
         let conversion = backtrack(&nodes, n, index);
-        if !paths.iter().any(|p| p.text == conversion.text) {
-            paths.push(conversion);
+        if let Some(group) = groups
+            .iter_mut()
+            .find(|group| group[0].text == conversion.text)
+        {
+            group.push(conversion);
+        } else {
+            groups.push(vec![conversion]);
         }
     }
-    paths
+    if k == 1 {
+        return groups.into_iter().take(1).collect();
+    }
+
+    let routes: Vec<String> = groups
+        .iter()
+        .map(|group| {
+            group[0]
+                .words
+                .iter()
+                .map(|word| word.text.as_str())
+                .collect::<Vec<_>>()
+                .join("\0")
+        })
+        .collect();
+    let route_refs: Vec<&str> = routes.iter().map(String::as_str).collect();
+    let mut indices = representative_indices(&route_refs, k.div_ceil(2));
+    let selected: std::collections::HashSet<usize> = indices.iter().copied().collect();
+    indices.extend((0..groups.len()).filter(|index| !selected.contains(index)));
+    let mut selected_groups: Vec<Vec<Conversion>> = indices
+        .into_iter()
+        .take(k)
+        .map(|index| std::mem::take(&mut groups[index]))
+        .collect();
+    selected_groups.sort_by(|left, right| right[0].score.total_cmp(&left[0].score));
+    selected_groups
 }
 
 /// 从 `nodes[position][index]` 回溯出整条路径。
