@@ -42,7 +42,7 @@
 
 R1：完整词之间以词级 `ranking::rank` 已排出的个人选择与上屏上下文顺序为准；联合路径不能仅因切分不同越过它。`learned_complete_word_keeps_its_choice_rank_across_segmentations` 修复前失败（“反感”覆盖已学的“方案”），修复后神经开/关均通过。
 
-R2：`retain_neural_eligible` 共用于旧入口与联合入口，以完整路径池最高总分计算门槛，先过滤后分配名额。`joint_margin_excludes_weak_protected_path_before_neural_scoring` 修复前失败（弱路径进入模型并翻盘），修复后通过；双切分、异步和个人总分的测试同样通过。
+R2：旧入口与联合入口共用 `retain_neural_eligible_by_text`，以完整路径池最高总分计算门槛，先确定有资格的文本组再分配名额；一个文本组中的同文本路径仍按各自总分、静态分、个人证据和代价重算。`joint_margin_excludes_weak_protected_path_before_neural_scoring` 修复前失败（弱路径进入模型并翻盘），修复后通过；双切分、异步和个人总分的测试同样通过。
 
 R3：`route` 保存部分路径的完整词序列，`representative_indices` 由浅到深选择分歧代表。把同一回归临时放在 B 的 Core 测试中，原实现分别首选“我晚都不想玩”“我今天卖都不想买”，修复后目标完整句均进入 scorer 并成为首选。预算不足时先保留较早分歧，组内按累计分取高者；有限束不能保证所有路径存活。
 
@@ -74,3 +74,35 @@ cargo run -p qingjian-cli -- --dict data/generated/dict.qj --neural /path/to/mod
 | 批量直接查询最大值 | 38.86 ms | 39.35 ms | 41.71 ms |
 
 批量直接查询每版预热一轮，再独立运行 5 轮 × 83 句（415 个样本）；CLI `--limit 0` 的 `total` 包含查询和释义标注，与上表整串冷启动评测口径不同，不包含神经模型。C 在第二次同口径运行得到中位数 12.34 ms、P95 30.59 ms、最大 39.50 ms，说明单机测量有波动。上述差异不能推断 macOS 按键延迟。产品工件的关键例：无 neural 时 `keneng`、`ke'neng` 均首选“可能”，显式 `wan'dou'bu'xiang'wan` 仍首选“晚都不想玩”；同步和异步 neural 均可把后者排成“玩都不想玩”。
+
+## R6：同文本路径去重与异步性能复核
+
+复核 HEAD `dfd083763d0726d0a5e83dbed711fff39fde328a` 上，终端节点先按路线多样性改序、再按文本去重，确实能把更低分的同文本路径留在前面。用 `wo'yan'jiu'sheng` 和五词控制词格先新增 `diverse_routes_keep_the_best_scoring_path_for_duplicate_text`：修复前 Rust 测试实际返回“我研究生”路径分 `-3.0`，预期的 `[我][研究][生]` 分 `-2.0` 被去掉；修复后文本仍只有一项且保留 `-2.0`。
+
+`convert_path_groups` 现在先按输出文本分组，路线代表只决定哪些不同文本占据 `k` 个位置，组内束宽保留的全部路径再交给 Engine。`convert_paths` 面向旧调用方时返回该组重排前总分最高的路径；普通整句与联合整句入口则将路径变体各自送入同文本共享的神经缓存，并按 `score + λ·(neural - static_score)` 分别计算。margin 以完整池最高总分决定文本组资格：组内某条路径符合门槛时，其他同文本路径不会提前丢掉个人分、选择加分、纠错代价或读音映射。联合选择器只为不同文本分配名额，保留所选文本跨词边界、跨切分的路径变体。
+
+回归包括 `diverse_routes_keep_the_best_scoring_path_for_duplicate_text`、`neural_rescore_keeps_the_best_same_text_path_after_terminal_diversity` 和 `same_text_routes_survive_selection_order_and_keep_path_specific_scores`。首项在修复前失败、修复后通过；整句入口的 mock scorer 实测“我研究生”仍以 `-1.50` 胜过“我研究声”的 `-1.75`。联合选择器测试交换重复项顺序并使用不同词边界和不同切分，确认同文本只占一个预算名额、所有路径分量保留，最终由各自路径分数决定代表。
+
+同一份冻结 TSV 另对比 A=`b3d147614a7b8cf141023f3654999cfb0f5fc72e`、B=`dfd083763d0726d0a5e83dbed711fff39fde328a`（R6 修复前 PR HEAD）、C=`2e8de33`（R6 代码提交）。三版使用相同 `dict.qj`、`lm.qj`、Linux x86_64 debug 配置及空个人学习状态：A 首选/字准确率 `31.3% / 73.3%`、平均/最大 `10.2 / 38.4 ms`；B `31.3% / 74.1%`、`14.5 / 39.7 ms`；C `31.3% / 74.1%`、`14.4 / 39.1 ms`。B→C 的 57 条首选错误及其前三候选逐行一致；当前修复没有改变冻结语料质量分数。
+
+V1 性能复核使用新加的 `apps/cli/examples/issue8_async_bench.rs`，产品词库与 bigram LM 相同，scorer 为确定性 mock 并在后台被 channel gate 暂停；因此它测的是 R3/R4 `k=6` 热路径与异步首次返回，不是产品神经模型耗时。每类 20 次：整串查询在新 Engine 上冷启动；逐键 cold 从新 Engine 输入每个前缀，神经分缓存冷，首个可评分查询后启动并挂起后台 scorer，后续按键查询继续；释放 scorer、等待各前缀分数入缓存后，对同一前缀序列测 hot。表中是微秒，格式为中位数 / P95 / 最大值；B=`dfd0837`，C=`2e8de33`。运行环境为 Linux x86_64、rustc/cargo `1.96.0`、debug 构建。
+
+| 输入 | B 整串 cold | C 整串 cold | B 逐键 cold | C 逐键 cold | B 逐键 hot | C 逐键 hot |
+| --- | --- | --- | --- | --- | --- | --- |
+| 短句 `nihao` | 4247 / 4296 / 37311 | 4320 / 4351 / 37871 | 2847 / 5815 / 5953 | 2899 / 5902 / 6120 | 1706 / 5458 / 5622 | 1741 / 5571 / 5622 |
+| 长句 `wojintianxiangyaoquxuexiao` | 15240 / 15420 / 16892 | 15419 / 15572 / 20160 | 8746 / 24335 / 29254 | 8847 / 24710 / 35035 | 7384 / 24040 / 29051 | 7553 / 24331 / 29536 |
+| 共同前缀 `wo'jin'tian'mai'dou'bu'xiang'mai` | 8812 / 9079 / 10153 | 8881 / 9005 / 9012 | 2552 / 6520 / 7313 | 2578 / 6557 / 7514 | 2278 / 6107 / 6282 | 2306 / 6180 / 7762 |
+| 多切分 `keneng` | 5018 / 5042 / 5053 | 5056 / 5161 / 5184 | 4131 / 5475 / 5790 | 4198 / 5528 / 6513 | 3722 / 5134 / 5208 | 3776 / 5202 / 5318 |
+
+B/C 的逐键中位数差约 1–2%，单机 debug 测量存在调度噪声；长句 cold 最大值从 29.25 ms 到 35.03 ms，不能排除系统干扰，也不据此声称严格无回归。20 次样本中，后台 gate 阻塞时仍分别完成 440 / 540 / 40 / 20 个长句 / 共同前缀 / 多切分 / 短句查询；query 返回耗时不包含等待 scorer，也不把 mock 的后台等待混进耗时。该例程只测 debug 构建，产品同步模型另用离线整句查询验证，不能据此推断 release 或 macOS 实机延迟。
+
+产品工件关键复测：无 neural 时 `keneng → 可能`、`ke'neng → 可能`、`wan'dou'bu'xiang'wan → 晚都不想玩`、`ping'guo'bu'xiang'chi → 苹果不想吃`、`yi'sheng'bu'xiang'lai → 一声不响来`、`jin'tian'bu'xiang'wan → 今天不想玩`；同步产品 scorer 开启后，对应首选为 `可能`、`可能`、`玩都不想玩`、`苹果不想吃`、`医生不想来`、`今天不想玩`。同步产品模型单次 query 耗时约 0.44–1.45 秒，仅用于离线质量验证；不代表异步按键返回时间。
+
+复现命令（B、C 在各自 worktree 执行；先把 C 的 example 文件复制进 B，因为 B 尚未包含该计时工具）：
+
+```bash
+export OPENSSL_INCLUDE_DIR=/tmp/qingjian-issue8-openssl/extracted/usr/include
+export OPENSSL_LIB_DIR=/tmp/qingjian-issue8-openssl/extracted/usr/lib/x86_64-linux-gnu
+cp /path/to/C/apps/cli/examples/issue8_async_bench.rs /path/to/B/apps/cli/examples/
+cargo run -p qingjian-cli --example issue8_async_bench -- --dict data/generated/dict.qj --lm data/generated/lm.qj --repetitions 20
+```
