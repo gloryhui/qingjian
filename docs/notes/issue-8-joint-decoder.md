@@ -14,7 +14,7 @@
 
 - 用户明确用 `'` 分开的合法完整音节直接固定；较长的段仍可在内部切分。未明确分隔的输入继续保留 parser 的多个候选。
 - 词级查询已遍历全部切分。整句热路径先搜索 parser 首条，再在其余切分中优先选择已有整段词级证据的一条；至多搜索两条，按相同静态 LM、个人 n-gram、用户加分与纠错代价比较完整路径，再统一神经重排。胜出切分进入 `Query.segmentations[0]`，供顶部拼音显示。
-- 开启神经重排时，同一词格保留不同句首词的前驱；每个位置的一半束名额和最终 Top-K 的一半名额先覆盖不同句首，再按总分填满。束宽仍为 8，重排总名额仍为 6。个人 n-gram 保持独立，神经分只替换静态分；异步后台接口和光标前文不变。
+- 开启神经重排时，词路径代表在后续词格继续传递，按词前缀逐层保护共同前缀后的分歧；跨切分合并也保留每种切分的结构代表。束宽仍为 8，重排总名额仍为 6。旧入口与联合入口先用完整路径池的最高总分计算 `neural_margin`，再分配重排席位。已有完整词的个人选择和上下文排序保持词级排序结果；重复文本不增加候选，只有它确实是首选时才同步顶部读音。个人 n-gram 保持独立，神经分只替换静态分；异步后台接口和光标前文不变。
 - 没有采用输入串特判、补整句词条、提升“玩/可能”词频、硬锁长词、单纯加大束宽或把神经模型同步放进 KeyDown。
 
 ## 结果与性能
@@ -37,3 +37,40 @@
 ## 已知限制
 
 静态 bigram 只看前一个词，不能可靠利用较远的句尾语义。无神经模型时“玩都不想玩”仍未达到 Issue 的首选要求，因此状态为 `PARTIALLY_FIXED / NEEDS_FOLLOWUP`。热路径只搜索两种切分；有整段词级证据的较后切分优先，但其他第三条及以后切分仍可能漏掉，需要更完整的共享拼音/词 lattice 与搜索预算设计。83 句评测首选率没有提升，平均 debug 查询增加约 4.1 ms；尚无 macOS 打包后的真人输入验收。
+
+## PR #9 复核修复与可复现评测
+
+R1：完整词之间以词级 `ranking::rank` 已排出的个人选择与上屏上下文顺序为准；联合路径不能仅因切分不同越过它。`learned_complete_word_keeps_its_choice_rank_across_segmentations` 修复前失败（“反感”覆盖已学的“方案”），修复后神经开/关均通过。
+
+R2：`retain_neural_eligible` 共用于旧入口与联合入口，以完整路径池最高总分计算门槛，先过滤后分配名额。`joint_margin_excludes_weak_protected_path_before_neural_scoring` 修复前失败（弱路径进入模型并翻盘），修复后通过；双切分、异步和个人总分的测试同样通过。
+
+R3：`route` 保存部分路径的完整词序列，`representative_indices` 由浅到深选择分歧代表。把同一回归临时放在 B 的 Core 测试中，原实现分别首选“我晚都不想玩”“我今天卖都不想买”，修复后目标完整句均进入 scorer 并成为首选。预算不足时先保留较早分歧，组内按累计分取高者；有限束不能保证所有路径存活。
+
+R4：全局六席在不同切分间轮流取结构代表，再按总分填充。双切分池的“玩”代表与真实联合入口测试均通过；同一真实入口测试在 B 上失败，目标句没有进入 scorer。门槛外路径仍不能被保护规则重新引入。
+
+R5：同文本同读音候选去重后，只在它确实是第一中文候选且路径未被改音时更新顶部切分。`duplicate_sentence_text_still_updates_winning_preedit` 在 B 上得到 `ken'eng`，修复后是 `ke'neng`；个人学习、英文位置和原有双拼/注音回归保留。
+
+冻结语料为 [issue-8-eval.tsv](issue-8-eval.tsv)，83 句由仓库公开的 `docs/user/input/index.md` 与 `docs/user/getting-started/first-input.md` 冻结；SHA-256 为 `eb1d88f2893a0681d17d80b652d17911a40538164803c2345f250981627e386e`。逐例 A/B/C 首选见 [issue-8-eval-results.tsv](issue-8-eval-results.tsv)。A 是 `b3d147614a7b8cf141023f3654999cfb0f5fc72e`，B 是 `f2698c8b1dad52fc4dff46c82a88c2787a0fd3d3`，C 是本 PR 后续提交。A→B 有两句首选文本局部改善但仍错；B→C 的 83 句首选文本完全相同，没有首选准确率提高或退化。
+
+数据为上游 `data-v2` 产品工件：`dict.qj` SHA-256 `3e33b16a84df555e6f16d52ac8ab3c2c6b6f1f71734e69463861fd5abd9c19dc`，`lm.qj` `f9fb7b4433dddce86610a5d33e571bea963f6c2a5d960b8bc908f25024d34cd1`，`model.qjm` `eed5bd0bda0c7bd8b43d1acb2dc4678d4bbe295bd47b2b0d4eeace0af9daff4d`。三份工件都不入库。三次评测都用同一文件、无个人学习初始状态、Linux x86_64 debug 构建、同一 Rust/Cargo 配置。每个 SHA 在独立 worktree 中把 `data/generated` 指向同一份产品工件，运行：
+
+```bash
+export OPENSSL_INCLUDE_DIR=/tmp/qingjian-issue8-openssl/extracted/usr/include
+export OPENSSL_LIB_DIR=/tmp/qingjian-issue8-openssl/extracted/usr/lib/x86_64-linux-gnu
+cargo build -p qingjian-cli
+cargo run -p qingjian-cli -- --dict data/generated/dict.qj --eval-text /path/to/issue-8-eval.tsv --misses 1000
+python3 /path/to/C/tools/issue8-bench.py /path/to/qingjian-cli /path/to/issue-8-eval.tsv
+cargo run -p qingjian-cli -- --dict data/generated/dict.qj --neural /path/to/model.qjm "keneng" "ke'neng" "wan'dou'bu'xiang'wan"
+```
+
+| 指标 | A base | B review | C 修复 |
+| --- | ---: | ---: | ---: |
+| 首选准确率 | 31.3% | 31.3% | 31.3% |
+| 字准确率 | 73.3% | 74.1% | 74.1% |
+| 整串冷启动平均查询 | 10.4 ms | 14.3 ms | 14.0 ms |
+| 整串冷启动最慢查询 | 38.9 ms | 40.3 ms | 38.3 ms |
+| 批量直接查询中位数 | 8.69 ms | 12.27 ms | 12.49 ms |
+| 批量直接查询 P95 | 21.74 ms | 30.42 ms | 31.48 ms |
+| 批量直接查询最大值 | 38.86 ms | 39.35 ms | 41.71 ms |
+
+批量直接查询每版预热一轮，再独立运行 5 轮 × 83 句（415 个样本）；CLI `--limit 0` 的 `total` 包含查询和释义标注，与上表整串冷启动评测口径不同，不包含神经模型。C 在第二次同口径运行得到中位数 12.34 ms、P95 30.59 ms、最大 39.50 ms，说明单机测量有波动。上述差异不能推断 macOS 按键延迟。产品工件的关键例：无 neural 时 `keneng`、`ke'neng` 均首选“可能”，显式 `wan'dou'bu'xiang'wan` 仍首选“晚都不想玩”；同步和异步 neural 均可把后者排成“玩都不想玩”。
