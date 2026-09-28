@@ -135,6 +135,17 @@ fn morf_and_equivalent_shuangpin_keys_only_match_mo_ren() {
 }
 
 #[test]
+fn full_pinyin_moren_still_prefers_default_without_correction() {
+    let dictionary =
+        Dictionary::parse("默认\tmo ren\t5000\n磨人\tmo ren\t100\n没人\tmei ren\t50000\n").unwrap();
+    let mut engine = Engine::new(dictionary);
+    engine.set_input("moren");
+
+    assert!(engine.active_correction("moren").is_none());
+    assert_eq!(engine.query().unwrap().candidates.items[0].text, "默认");
+}
+
+#[test]
 fn shuangpin_moves_mode_keys_to_shifted_letters() {
     let mut engine = xiaohe();
     engine.set_input("v");
