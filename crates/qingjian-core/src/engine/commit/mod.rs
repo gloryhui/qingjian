@@ -477,7 +477,7 @@ impl Engine {
     ) -> Option<Alignment> {
         let Some((syllable, remaining)) = syllables.split_first() else {
             return Some(Alignment {
-                consumed: pos,
+                consumed: self.rest_at(input, pos).1,
                 typos: typos.clone(),
             });
         };
@@ -526,17 +526,17 @@ impl Engine {
             }
             pos = start + common;
         }
-        alignment.consumed = pos;
+        alignment.consumed = if pos > 0 {
+            self.rest_at(input, pos).1
+        } else {
+            pos
+        };
         alignment
     }
 
     /// `pos` 处这个音节能看到的输入段（到下一个 `'` 为止）与它的起点（跳过开头的 `'`）。
     fn rest_at<'a>(&self, input: &'a str, pos: usize) -> (&'a str, usize) {
-        let start = if pos > 0 && input[pos..].starts_with('\'') {
-            pos + 1
-        } else {
-            pos
-        };
+        let start = input.len() - input[pos..].trim_start_matches('\'').len();
         let rest = &input[start..];
         let rest = &rest[..rest.find('\'').unwrap_or(rest.len())];
         (rest, start)
