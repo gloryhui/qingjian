@@ -1,6 +1,11 @@
 //! 可打印字符的处理：中英文模式、直输段、表达式与问字模式的分流。
 
-use super::*;
+use qingjian_core::QUESTION_PREFIX;
+use qingjian_platform::Modifiers;
+
+use super::QingjianInputController;
+use crate::host;
+use crate::imk::{TextClient, modifiers};
 
 /// 这个大写字母是不是**按着 Shift** 打的（只有它归 `[general] shift_letter` 管）。
 ///
@@ -88,8 +93,7 @@ impl QingjianInputController {
             }
             return false;
         }
-        // 英文候选：字母（以及组词中的 _ ' -）进缓冲区，候选来自英文词表。选词与中文模式一样：
-        // 空格选高亮（词上屏后空格照样交给应用，接着打下一个词）、数字选当前页第 N 个、翻页键翻页；
+        // 英文候选：字母进缓冲区，候选来自英文词表。空格选高亮（词上屏后空格照样交给应用）、数字选当前页第 N 个；
         // 数字对应的格子没有候选（kubectl 这类词表没有的词、候选不足 N 个）时是标识符的一部分（foo1）。
         // 回车、标点先把敲的字母原样上屏再交给应用
         if english && !question {
@@ -107,18 +111,10 @@ impl QingjianInputController {
             {
                 return self.commit_index(index, client);
             }
-            if c.is_ascii_alphabetic()
-                || (composing && (c.is_ascii_digit() || matches!(c, '_' | '\'' | '-')))
-            {
+            if c.is_ascii_alphabetic() || (composing && c.is_ascii_digit()) {
                 host::with(|h| h.engine.push(letter));
                 self.refresh(client);
                 return true;
-            }
-            if composing && c == page_previous {
-                return self.turn_page(-1, client);
-            }
-            if composing && c == page_next {
-                return self.turn_page(1, client);
             }
             if composing {
                 if c == ' ' {

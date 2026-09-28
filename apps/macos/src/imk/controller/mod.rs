@@ -9,11 +9,11 @@ use objc2::{define_class, msg_send, sel};
 use objc2_app_kit::{NSEvent, NSEventMask, NSEventModifierFlags, NSEventType, NSMenu};
 use objc2_foundation::NSObjectProtocol;
 use objc2_input_method_kit::{IMKInputController, IMKServer};
-use qingjian_core::{Candidate, QUESTION_PREFIX};
+use qingjian_core::Candidate;
 use qingjian_platform::Modifiers;
 
-use self::route::Route;
-use super::{TextClient, catch_panic, modifiers, recover_from_panic, secure_input};
+use self::{keyboard::english_keyboard_text, route::Route};
+use super::{TextClient, catch_panic, recover_from_panic, secure_input};
 use crate::candidates::Preedit;
 use crate::host;
 use crate::menubar;
@@ -21,6 +21,7 @@ use crate::menubar;
 mod command;
 mod commit;
 mod display;
+mod keyboard;
 mod mode;
 mod route;
 mod text;
@@ -200,15 +201,6 @@ fn digit_key(key_code: u16) -> Option<usize> {
     })
 }
 
-/// 输入事件中的半角或全角圆括号，都统一映射成英文模式使用的 ASCII 括号。
-fn ascii_parenthesis(text: &str) -> Option<&'static str> {
-    match text {
-        "(" | "（" => Some("("),
-        ")" | "）" => Some(")"),
-        _ => None,
-    }
-}
-
 impl QingjianInputController {
     /// 登录 / 锁屏窗口：输入源菜单里没有青简，loginwindow 却照样激活它，按键一律交还系统。
     ///
@@ -258,7 +250,7 @@ impl QingjianInputController {
         host::with(|h| h.mode.interrupt());
         // 提示在显示：敲任何键先收掉，键照常处理
         host::with(|h| h.clear_notice());
-        // 英文模式的纯直通：字母、数字、标点、Space / Enter / Tab / 方向键与各种快捷键整个交给应用，
+        // 英文模式的纯直通：可打印字符按英文键盘上屏，命令键与快捷键交给应用。
         // 不组句、不产生 marked text、不转全角标点、不查候选，也不碰翻译路径（顺序见 [`route::Route`]）。
         // 组句中不直通：那一键要先收掉手上的拼音。Caps Lock 不参与：它只管大小写，中英模式只有单击切换键这一个来源。
         let passthrough = host::with(|h| {
@@ -268,12 +260,20 @@ impl QingjianInputController {
             )
         })
         .unwrap_or(false);
-        // 直通时这两格一律不查：整键归应用，读选区和字符都是白做功
+        let english = host::with(|h| h.mode.english()).unwrap_or(false);
+        let keyboard_text = english
+            .then(|| english_keyboard_text(event, pressed))
+            .flatten();
+        // 纯直通不读选区，也不处理翻译状态。
         let reviewing = !passthrough && host::with(|h| h.translation.is_some()).unwrap_or(false);
         let hotkey = !passthrough && self.translate_hotkey(event, pressed);
         match Route::decide(passthrough, reviewing, hotkey) {
             Route::Passthrough => {
-                if self.insert_english_parenthesis(event, pressed, client) {
+                if let Some(text) = keyboard_text {
+                    for c in text.chars() {
+                        host::with(|h| h.engine.note_passthrough(c));
+                    }
+                    client.insert_text(&text);
                     return true;
                 }
                 // 直通的字符记进历史与输入日志，切回中文时上下文才接得上；快捷键不记
@@ -287,10 +287,6 @@ impl QingjianInputController {
             Route::Translate => return self.translate_selection(client),
             Route::Continue => {}
         }
-        // 放在修饰键 + 数字快捷键之前：英文候选组句里 Shift+9/0 应该输入括号，而不是删候选。
-        if self.insert_english_parenthesis(event, pressed, client) {
-            return true;
-        }
         // 修饰键 + 数字：按配置的两组组合上屏第一 / 第二个译词（缺省 ⌥ 与 ⇧⌥）、删候选（缺省 ⇧）。
         // 只在组句中认：不在组句时 ⇧4 就是 `$`，得走下面的标点转换（中文模式出 ￥、⇧6 出 ……、⇧1 出 ！），
         // 以前在这里被截走后原样还给应用，全角转换就没机会做了。
@@ -298,6 +294,7 @@ impl QingjianInputController {
         let composing = host::with(|h| !h.engine.composition().is_empty()).unwrap_or(false);
         let expression = composing && host::with(|h| h.engine.expression_mode()).unwrap_or(false);
         if composing
+            && !english
             && !expression
             && !pressed.is_empty()
             && let Some(digit) = digit_key(key)
@@ -342,42 +339,17 @@ impl QingjianInputController {
         if command || control {
             return false;
         }
+        if let Some(text) = keyboard_text {
+            if !self.handle_text(&text, client, pressed) {
+                // IMK 的未处理事件仍可能走中文标点路径，因此英文键盘字符显式上屏。
+                client.insert_text(&text);
+            }
+            return true;
+        }
         match event.characters() {
             Some(text) if !text.is_empty() => self.handle_text(&text.to_string(), client, pressed),
             _ => false,
         }
-    }
-
-    /// 英文模式下消费括号键并显式插入 ASCII，候选组句按问字 / 英文词的既有规则收尾。
-    fn insert_english_parenthesis(
-        &self,
-        event: &NSEvent,
-        pressed: Modifiers,
-        client: TextClient<'_>,
-    ) -> bool {
-        if pressed.command
-            || pressed.control
-            || pressed.option
-            || !host::with(|h| h.mode.english()).unwrap_or(false)
-        {
-            return false;
-        }
-        let text = event.characters().map(|text| text.to_string());
-        let Some(ascii) = text.as_deref().and_then(ascii_parenthesis) else {
-            return false;
-        };
-        if host::with(|h| !h.engine.composition().is_empty()).unwrap_or(false) {
-            if host::with(|h| h.engine.question_mode()).unwrap_or(false) {
-                self.commit_highlighted(client);
-            } else {
-                self.commit_raw(client);
-            }
-        }
-        if let Some(c) = ascii.chars().next() {
-            host::with(|h| h.engine.note_passthrough(c));
-        }
-        client.insert_text(ascii);
-        true
     }
 
     /// 这一键是不是翻译选中文字的快捷键（配置 `[shortcut] translate_selection`，缺省 `⌃⌥T`）。

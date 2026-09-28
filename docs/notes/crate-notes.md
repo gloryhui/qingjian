@@ -219,7 +219,11 @@ IMK 输入法，源码按 `app / host / imk / candidates / menubar / preferences
   Caps Lock 只管大小写，状态项靠现成的 0.25 s 轮询带 ⇪；`[general] shift_letter = "compose"` 也**只认真正按住 Shift 打出的大写**（`imk/controller/text.rs` 要 `Modifiers.shift`），
   Caps Lock 送来的大写仍旧直接交给应用、不进组句。
   英文模式且这个应用不给英文候选、且不在组句时是纯直通，判定与翻译路径的先后写在 `imk/controller/route.rs::Route::decide`（`dispatch_event` 按它分发）：
-  **纯直通先于确认译文与翻译快捷键**，所以这一模式下连快捷键都不拦，Space / Enter / Tab / 方向键与各应用快捷键都归应用，与系统 ABC 一致。
+  **纯直通先于确认译文与翻译快捷键**，可打印的 ASCII 字符直接 `insertText`，Enter / Tab / 方向键与各应用快捷键归应用，与系统 ABC 一致。
+  `imk/controller/keyboard.rs` 统一接英文可打印字符；事件若带全角英数或中文标点，用 `NSEvent::charactersByApplyingModifiers` 按系统键盘布局重新解码，
+  不再只特判圆括号。空字符、组合重音字母和 Option / Command / Control 组合交还系统。英文候选路径也显式上屏解码后的字符，
+  英文模式不触发中文组句的修饰键 + 数字译词 / 删候选操作，英文候选里标点也不进缓冲区或用来翻页。
+  原生键盘回归 `cargo test -p qingjian-macos --test english_keyboard` 用独立主线程入口（AppKit 重新解码会同步到主线程），在 ABC 布局下覆盖全部 32 个标点。
   直通判定要看当前应用给不给英文候选，而 `activateServer:` 不保证报得出 bundle identifier，所以 `dispatch_event` 开头先 `note_application` 再算。
   切模式时 `commit_raw` + `end_translation`（放弃待确认的译文）+ 停联想 + 收候选框，不留幽灵文本。
 - macOS 升级时的一次性迁移：`Config::migrate_macos_pure_english` 在 `Settings::load` 读配置前跑，把老配置的 `[general] english_candidates` 改成 `false`

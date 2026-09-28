@@ -68,7 +68,7 @@ impl ModeState {
         true
     }
 
-    /// 这一键是不是整个交给应用（纯直通）：不进引擎、不建组句、不产生 marked text、不转全角标点。
+    /// 这一键是不是走纯英文键盘路径：不建组句、不产生 marked text、不转全角标点。
     ///
     /// 只认中英模式这一份状态：英文模式且这个应用不给英文候选才直通。`candidates_in_app` 为
     /// `[general] english_candidates` 开着且这个应用不在 `[apps] english_candidates_off` 里

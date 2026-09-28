@@ -6,7 +6,7 @@
 /// `Route::decide` 的结果。
 #[derive(Debug, PartialEq, Eq)]
 pub(super) enum Route {
-    /// 纯直通：整个键交给应用，不进引擎、不组句、不查候选，翻译路径一律不拦。
+    /// 纯直通：按英文键盘输出字符，命令键交给应用，不组句、不查候选、不走翻译。
     Passthrough,
 
     /// 有译文在等确认：这一键先给确认流程（回车替换、Esc 保留原文）。
