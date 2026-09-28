@@ -596,7 +596,7 @@ const PURE_ENGLISH_STAMP: &str = ".pure-english-migrated";
 const PURE_ENGLISH_STAMP_NOTE: &str = concat!(
     "青简写过的一次性迁移记录：本次启动检查过 [general] english_candidates，英文模式是纯直通",
     "（按键整个交给应用，与系统 ABC 键盘一样）。\n",
-    "在偏好设置里重新打开「英文模式也给候选」不会再被改回去。删掉这个文件会再检查一次。\n",
+    "历史设置不再控制 macOS 英文模式。删掉这个文件会再检查一次。\n",
 );
 
 /// 原子写配置文件；数据目录还没有就先建（新账户第一次打开设置时输入法可能还没跑过）。
@@ -754,7 +754,7 @@ mod tests {
     }
 
     /// 本来就是 `false` 的配置（新装读到的模板）也要留下印记：印记记的是「这次检查做过了」，
-    /// 少了它，用户之后自己勾上「英文模式也给候选」，下一次启动又会被当成老配置改回去。
+    /// 避免下一次启动重复检查；macOS 英文直通不依赖这个历史设置的当前值。
     #[test]
     fn pure_english_migration_stamps_a_config_that_was_already_pure() {
         let dir = std::env::temp_dir().join("qingjian-pure-english-stamp-test");
