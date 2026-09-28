@@ -4,6 +4,7 @@ use super::*;
 
 mod code;
 mod english_tail;
+mod joint;
 mod result;
 mod snapshot;
 
@@ -180,7 +181,7 @@ impl Engine {
         } else {
             None
         };
-        let (segmentations, tail): (Vec<Segmentation>, &str) = match &correction {
+        let (mut segmentations, tail): (Vec<Segmentation>, &str) = match &correction {
             Some(c) => (vec![c.segmentation.clone()], ""),
             None => (segmentations, tail),
         };
@@ -311,7 +312,7 @@ impl Engine {
             if self.chinese_first {
                 self.insert_sentence(
                     &mut items,
-                    &segmentations,
+                    &mut segmentations,
                     correction.is_none(),
                     english_tail.as_ref().filter(|_| correction.is_none()),
                     head_wins,
@@ -321,7 +322,7 @@ impl Engine {
                 self.insert_english(&mut items, unlikely);
                 self.insert_sentence(
                     &mut items,
-                    &segmentations,
+                    &mut segmentations,
                     correction.is_none(),
                     english_tail.as_ref().filter(|_| correction.is_none()),
                     head_wins,
@@ -520,7 +521,7 @@ impl Engine {
     pub(super) fn insert_sentence(
         &self,
         items: &mut Vec<Candidate>,
-        segmentations: &[Segmentation],
+        segmentations: &mut [Segmentation],
         typos: bool,
         english_tail: Option<&EnglishTail>,
         head_wins: bool,
@@ -544,7 +545,7 @@ impl Engine {
                 }
             }
             _ => {
-                if let Some(plain) = self.plain_sentence(items, best, typos) {
+                if let Some(plain) = self.plain_sentence_joint(items, segmentations, typos) {
                     let position = leading_english(items);
                     items.insert(position, plain);
                 }
@@ -564,7 +565,16 @@ impl Engine {
         if best.syllables.len() < 2 {
             return None;
         }
-        let mut conversion = self.convert_sentence(&best.patterns(), typos)?;
+        let conversion = self.convert_sentence(&best.patterns(), typos)?;
+        self.sentence_candidate(items, best, conversion)
+    }
+
+    pub(super) fn sentence_candidate(
+        &self,
+        items: &mut Vec<Candidate>,
+        best: &Segmentation,
+        mut conversion: Conversion,
+    ) -> Option<Candidate> {
         // 不按原样读的路径（敲错边 / 模糊音）不许压过「敲的拼音本身就是一个词」：`jineng` 按 `jin eng` 切时
         // 词图里没有 技能，敲错边读出 近藤；`ceshi` 读出 的是。词级候选里有音节正好拼成整段输入的词时退回原样的路径
         if conversion.altered() {
@@ -645,7 +655,7 @@ impl Engine {
         } else {
             1
         };
-        let mut paths = sentence::convert_paths(
+        let groups = sentence::convert_path_groups(
             &dictionaries,
             &expanded.positions(),
             whole,
@@ -656,10 +666,11 @@ impl Engine {
             |index, syllable| expanded.cost(index, syllable),
             &mut self.span_cache.borrow_mut(),
         );
-        // 与最优路径差得太远的不参与：那种差距多半是个人 n-gram 拉开的
+        let mut paths: Vec<Conversion> = groups.into_iter().flatten().collect();
+        paths.sort_by(|a, b| b.score.total_cmp(&a.score));
+        // 与最优路径差得太远的不参与：那种差距多半是个人 n-gram 拉开的。
+        self.retain_neural_eligible_by_text(&mut paths, |path| &path.text, |path| path.score);
         if paths.len() > 1 {
-            let floor = paths[0].score - self.neural_margin;
-            paths.retain(|p| p.score >= floor);
             self.rescore_paths(&mut paths);
         }
         paths.into_iter().next()

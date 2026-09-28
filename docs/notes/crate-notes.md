@@ -22,6 +22,8 @@ TSV 解析、查询与生成工具把 `lue` / `nue` 统一成 `lve` / `nve`。
 
 ## crates/qingjian-core
 
+整句候选在有限预算内比较 parser 首条和一条优先有整段词级证据的切分；用户用 `'` 分开的合法完整音节直接固定为该音节。`engine/query/joint.rs` 只在实际首选与读音一致时把切分放到 `Query.segmentations[0]`；已有完整词的词级个人选择和上下文排序保留。神经模型启用时，`sentence/viterbi/` 把词路径传过后续词格，`sentence/diversity.rs` 按路径前缀逐层保留共同前缀后的分歧。不同输出文本竞争六条重排名额，同文本的束内词路径留在同一组，分别保留静态分、个人证据、选择加分与代价，按神经公式重算后才决定该文本的有效路径。跨切分合并按不同文本分配名额，并把已选文本的各条路径送入统一重排。旧整句入口与联合入口均先按完整路径池最高总分和 `neural_margin` 确定文本组资格，再分配重排名额。`SearchDiagnostics` 与 CLI 的 `path_trace` 示例可按需查看词格、静态/兜底/个人分数、前驱竞争和剪枝；`issue8_async_bench` example 用受控后台 scorer 量逐键开销。无神经模型时仍只输出静态路径的首选；静态 bigram 无法可靠表达较远的句内语义，见 [Issue #8 诊断](issue-8-joint-decoder.md)。
+
 模块：`composition`（缓冲区与光标；中文模式下 Shift+字母按小写进 `buffer` 参与匹配、大写记在 `shifted`，`typed_text` 还原后用于原样上屏）/ `parser` / `correction`（拼写纠错：整段一处编辑的候选纠正 + `typo` 音节级敲错变体表，后者进整句词图当带代价的边）/
 `candidate` / `ranking` / `shortcut` / `sentence` / `fuzzy` / `shuangpin`（双拼：七套方案键位表、键 → 全拼解码与消耗换算）/ `zhuyin`（大千注音：键 → 注音符号 → 拼音，`[general] zhuyin` 开关，声调只判音节完整不进查询）/ `emoji` /
 `english`（英文模式候选）/ `engine`（`query::EnglishTail`：句末英文词并入整句，`woxiangxuehaorust` → 我想学好rust，尾段也像拼音时按分数与拼音读法比）。
@@ -104,7 +106,7 @@ TSV 解析、查询与生成工具把 `lue` / `nue` 统一成 `lve` / `nve`。
 `model.safetensors` + `config.json` + `vocab.json`），给「前文 + 整句」按字累加 log 概率；前文的每层 K / V 缓存（`PrefixCache`），
 同一段前文只算一次，每个候选只算自己那几个字（64 字前文 × 8 条 28 ms，Metal）。features `accelerate` / `metal` 换后端，壳用 `metal`。
 
-Engine 侧在 `engine/rescoring/`：接了打分器就取 Viterbi 前 `RESCORE_PATHS` = 6 条路径按 `路径分 + λ·(神经分 − 静态二元分)` 重排（λ `NEURAL_WEIGHT` 0.5，
+Engine 侧在 `engine/rescoring/`：接了打分器就取多样化 Viterbi 路径中最多 `RESCORE_PATHS` = 6 条按 `路径分 + λ·(神经分 − 静态二元分)` 重排（λ `NEURAL_WEIGHT` 0.5，
 个人 n-gram / 用户加分 / 代价不动），分走「前文 + 文本 → 神经分」缓存 `NeuralCache`；同步打分器（`with_sentence_scorer`，CLI 评测）当场补分，
 异步的（`with_async_sentence_scorer`，后台线程 `RescoreWorker`）查询不等模型：缺分的记下来，壳停键后 `request_rescoring`、`poll_rescoring` 到了再 `query` 一次。
 前文优先用壳给的应用光标前文（`set_rescoring_context`），没有用本会话最近 64 个上屏字符。CLI `--neural <导出目录>`（`--neural-weight` / `--neural-context` / `--neural-async`）。
@@ -206,29 +208,28 @@ IMK 输入法，源码按 `app / host / imk / candidates / menubar / preferences
 - 日志在 `~/Library/Logs/Qingjian/`（按天分文件留 7 天，删了会重建），用户数据与配置在 `~/Library/Application Support/Qingjian/`。
 - 配置项：云联想 `[predict]`（偏好设置「云服务」页有「测试连接」按钮：`qingjian_predict::ConnectionTest` 起线程发一条最小请求，`Host` 用独立定时器 `CloudTestMonitor` 轮询结果显示到窗口底部；
   `reasoning_effort` 缺省 `none`，DeepSeek V4 默认思考，不关正文为空）；模糊音 `[fuzzy]` 默认都关；`[general]` 学习语言（`off` 不显示译文）/ 每页候选数 / 翻页键 / 外观 / 竖排横排 / 拼音显示位置 /
-  英文模式候选开关（关 = 纯直通；首次运行写出的模板里就是关，见 `template_english_candidates!`）/ 中文优先 `chinese_first` / 双拼方案 `shuangpin`（小鹤 / 自然码 / 微软 / 搜狗 / 智能ABC / 小浪 / 首道，空为全拼）/ 日志级别 `log_level`（缺省 info 不含敲的内容，debug 逐键记，热切换）/ 输入日志 `input_log`；
+  中文优先 `chinese_first` / 双拼方案 `shuangpin`（小鹤 / 自然码 / 微软 / 搜狗 / 智能ABC / 小浪 / 首道，空为全拼）/ 日志级别 `log_level`（缺省 info 不含敲的内容，debug 逐键记，热切换）/ 输入日志 `input_log`；
   `[shortcut]` 模式键 v / u、`question_mark`（缺省关，开了空缓冲区敲 `?` 进问字）、上屏第一 / 第二个译词的修饰键 `translation` / `translation_second`、删候选 `delete_candidate`（缺省 shift，用户词整删、词库词清学习）、翻译选中文字 `translate_selection`；
-  `[apps] english_candidates_off` 按 bundle identifier 列出英文模式不给候选的应用（缺省终端 / 编辑器 / IDE，`*` 前缀匹配）；
+  历史 `[general] english_candidates` 与 `[apps] english_candidates_off` 在 macOS 上保留解析兼容，不参与 Shift「英」模式的路由，也不再显示偏好设置控件；
   `[dictionaries] domains` 打开随包的领域词库（`Resources/dicts/` 11 本，缺省只开 `idioms`），`disabled` 关掉用户目录 `dicts/` 里的某本导入词库；
   偏好设置「词库」页随包的可开关、导入的可开关 / 移除，可导入 TSV / Rime yaml / .qj。
-- 中英模式是 `host/mode.rs::ModeState` 自己的一份进程级状态（不再是 Caps Lock 硬件状态）：`[shortcut] switch_mode` 勾选的键单击一下翻一次，
+- 中英模式是 `host/mode/mod.rs::ModeState` 自己的一份进程级状态（不再是 Caps Lock 硬件状态）：`[shortcut] switch_mode` 勾选的键单击一下翻一次，
   单击判定用 `qingjian-platform::key_tap::KeyTap`——它按**物理键位**记（`ModifierEvent { switch, slot, bare }`，macOS 左 / 右 Shift 是两个 slot，
   聚合的 `modifierFlags` 分不出左右），按下那一刻还要求**没搭着别的修饰键**（`bare`，`imk/modifiers.rs::bare_press` 判 ⌘⌥⌃ 与 Fn，Caps Lock 亮着不算），
   抬起时手上只剩这一个键位才命中；`FlagsChanged` 在 `imk/controller/mode.rs::handle_flags` 里喂给它，判定之后再用聚合标志 `resync` 对账
   （输入法可能在按住 Shift 时才被激活，漏掉抬起会留幽灵按下；对账必须在判定之后，否则抬起会被当成按下）。KeyDown 一律 `interrupt` 作废正按着的那次单击。
   Caps Lock 只管大小写，状态项靠现成的 0.25 s 轮询带 ⇪；`[general] shift_letter = "compose"` 也**只认真正按住 Shift 打出的大写**（`imk/controller/text.rs` 要 `Modifiers.shift`），
   Caps Lock 送来的大写仍旧直接交给应用、不进组句。
-  英文模式且这个应用不给英文候选、且不在组句时是纯直通，判定与翻译路径的先后写在 `imk/controller/route.rs::Route::decide`（`dispatch_event` 按它分发）：
-  **纯直通先于确认译文与翻译快捷键**，可打印的 ASCII 字符直接 `insertText`，Enter / Tab / 方向键与各应用快捷键归应用，与系统 ABC 一致。
-  `imk/controller/keyboard.rs` 统一接英文可打印字符；事件若带全角英数或中文标点，用 `NSEvent::charactersByApplyingModifiers` 按系统键盘布局重新解码，
-  不再只特判圆括号。空字符、组合重音字母和 Option / Command / Control 组合交还系统。英文候选路径也显式上屏解码后的字符，
-  英文模式不触发中文组句的修饰键 + 数字译词 / 删候选操作，英文候选里标点也不进缓冲区或用来翻页。
-  原生键盘回归 `cargo test -p qingjian-macos --test english_keyboard` 用独立主线程入口（AppKit 重新解码会同步到主线程），在 ABC 布局下覆盖全部 32 个标点。
-  直通判定要看当前应用给不给英文候选，而 `activateServer:` 不保证报得出 bundle identifier，所以 `dispatch_event` 开头先 `note_application` 再算。
+  英文模式始终纯直通，`ModeState::passthrough()` 只看 `english`。
+  `dispatch_event` 在应用识别、修饰标志 / 键码读取、提示清理及字符读取之前调用 `imk/controller/route/mod.rs::Route::key_down`，
+  只 `mode.interrupt()` 作废单击；英文结果为 `Passthrough` 并立即返回 false，整个事件交还 macOS / 当前布局 / 应用。
+  不调用 `insertText`、`note_passthrough`、`handle_text` 或 Engine，也不看 composition、英文候选配置、应用名单和翻译状态。
+  已删除 `english_keyboard_text`、布局重解码与旧 ABC 解码测试；状态机及路由测试覆盖双向切换、组合键、候选配置解耦、组句收尾和中文标点。
+  `handle_text` 只负责中文模式，保留中文模式的英文词识别；Windows / Linux 的英文候选实现不变。
   切模式时 `commit_raw` + `end_translation`（放弃待确认的译文）+ 停联想 + 收候选框，不留幽灵文本。
 - macOS 升级时的一次性迁移：`Config::migrate_macos_pure_english` 在 `Settings::load` 读配置前跑，把老配置的 `[general] english_candidates` 改成 `false`
   （缺这一项的补上）。检查做完在配置同目录落一个 `.pure-english-migrated` 印记文件——印记记的是「这次检查过了」而不是「真的改了」，
-  本来就已经是 `false` 的（新装的模板）也落，所以用户之后在「通用」页重新勾上就不再被动。**落盘顺序是硬约束**：读通 → 需要改时先改配置成功 →
+  本来就已经是 `false` 的（新装的模板）也落。保留历史迁移兼容；现在即使配置又改为 `true`，macOS「英」也始终直通。**落盘顺序是硬约束**：读通 → 需要改时先改配置成功 →
   最后才落印记，中间任一步失败都不留印记，下次启动还能重试。
 - 系统文本替换（系统设置「键盘 → 文本替换」）：`host/config/text_replacements.rs` 从 `NSUserDefaults` 全局域读 `NSUserDictionaryReplacementItems`
   （每条 `{ on, replace, with }`），激活输入法时重读，变了就经 Core `merge_replacements` 并进配置里的自定义短语再 `set_custom_phrases`；

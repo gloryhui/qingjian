@@ -1,4 +1,4 @@
-//! 呈现：删候选、按应用关英文候选、翻译选区的起止、提示气泡、会话重置与候选窗口绘制。
+//! 呈现：删候选、翻译选区的起止、提示气泡、会话重置与候选窗口绘制。
 
 mod notice;
 mod translation_job;
@@ -6,8 +6,13 @@ mod translation_job;
 pub(super) use notice::Notice;
 pub use translation_job::TranslationJob;
 
+use super::Host;
 use super::cloud::cloud_candidate;
-use super::*;
+use crate::candidates::{Frame, Preedit, Row};
+use objc2::MainThreadMarker;
+use objc2_foundation::NSRect;
+use qingjian_core::{Candidate, CandidateKind, Cell};
+use qingjian_platform::LayoutMode;
 
 impl Host {
     /// 删掉当前页第 `offset` 格的候选：用户词整个删、词库词清学习。返回给用户看的一句话；那格没有候选返回 `None`。
@@ -23,11 +28,6 @@ impl Host {
         } else {
             format!("「{text}」是词库里的词，也没有学习记录，没什么可删")
         })
-    }
-
-    /// 这个应用里英文模式给不给候选：全局开关开着，且应用不在 `[apps] english_candidates_off` 里。
-    pub fn english_candidates_in(&self, bundle: Option<&str>) -> bool {
-        self.english_candidates && !bundle.is_some_and(|b| self.apps.english_candidates_off(b))
     }
 
     /// 开始一次翻译：记下选区，窗口先显示「翻译中…」。调用方已发出请求。
