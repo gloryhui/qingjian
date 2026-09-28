@@ -8,6 +8,7 @@ mod correction;
 mod custom;
 mod emoji;
 mod english;
+mod joint;
 mod learning;
 mod lookup;
 mod privacy;

@@ -1,11 +1,11 @@
-//! 可打印字符的处理：中英文模式、直输段、表达式与问字模式的分流。
+//! 中文模式的可打印字符处理：组句、英文直输段、表达式与问字模式。
 
 use qingjian_core::QUESTION_PREFIX;
 use qingjian_platform::Modifiers;
 
 use super::QingjianInputController;
 use crate::host;
-use crate::imk::{TextClient, modifiers};
+use crate::imk::TextClient;
 
 /// 这个大写字母是不是**按着 Shift** 打的（只有它归 `[general] shift_letter` 管）。
 ///
@@ -13,11 +13,6 @@ use crate::imk::{TextClient, modifiers};
 /// 等于让 ⇪ 决定要不要组句——那键只管大小写。这种大写整个交给应用，一个字都不进青简。
 fn shifted_uppercase(c: char, modifiers: Modifiers) -> bool {
     c.is_ascii_uppercase() && modifiers.shift
-}
-
-/// 英文模式下的 ASCII 标点始终按半角交给应用，即使本次按键绕到通用文本处理的末尾。
-fn english_punctuation_is_passthrough(english: bool, c: char) -> bool {
-    english && c.is_ascii_punctuation()
 }
 
 impl QingjianInputController {
@@ -29,34 +24,16 @@ impl QingjianInputController {
         modifiers: Modifiers,
     ) -> bool {
         tracing::debug!(%text, "inputText");
-        let mut composing = host::with(|h| !h.engine.composition().is_empty()).unwrap_or(false);
-        // 中英模式是输入法自己记的那一份（单击 Shift 翻），Caps Lock 只管大小写
-        let english = host::with(|h| h.mode.english()).unwrap_or(false);
-        // 显式开了英文候选才有英文词；终端、编辑器这类应用（`[apps] english_candidates_off`）里不给
-        let english_candidates = english
-            && host::with(|h| h.english_candidates_in(client.bundle_identifier().as_deref()))
-                .unwrap_or(false);
-        // 英文候选组词中候选又关了（改了配置或换到不给候选的应用）：敲的字母先原样上屏，别把它们当拼音
-        if composing
-            && !english_candidates
-            && host::with(|h| h.engine.english_mode()).unwrap_or(false)
-        {
-            self.commit_raw(client);
-            composing = false;
-        }
+        let composing = host::with(|h| !h.engine.composition().is_empty()).unwrap_or(false);
         let [byte] = text.as_bytes() else {
-            // 多字符文本（如输入法联动、粘贴）：先把当前候选（英文模式下是敲的字母）上屏，再交给应用
+            // 多字符文本（如输入法联动、粘贴）：先把当前候选上屏，再交给应用
             if composing {
-                if host::with(|h| h.engine.english_mode()).unwrap_or(false) {
-                    self.commit_raw(client);
-                } else {
-                    self.commit_highlighted(client);
-                }
+                self.commit_highlighted(client);
             }
             return false;
         };
         let c = char::from(*byte);
-        // 缓冲区为空时敲 ? 先进问字模式（配置 `[shortcut] question_mark`，缺省关），中英文模式都行：
+        // 缓冲区为空时敲 ? 先进问字模式（配置 `[shortcut] question_mark`，缺省关）：
         // 后面跟字母就是在问字，跟别的键就还原成问号
         if !composing
             && c == QUESTION_PREFIX
@@ -67,65 +44,14 @@ impl QingjianInputController {
             return true;
         }
         // 双拼下 Shift+V / Shift+U 进表达式 / 问字模式（全拼下的 v / u 被音节占了）
-        if !composing && !english && host::with(|h| h.engine.takes_mode_letter(c)).unwrap_or(false)
-        {
+        if !composing && host::with(|h| h.engine.takes_mode_letter(c)).unwrap_or(false) {
             host::with(|h| h.engine.push(c));
             self.refresh(client);
             return true;
         }
         let question = composing && host::with(|h| h.engine.question_mode()).unwrap_or(false);
-        // 英文模式下问字：字母以大写送来（按着 Shift 或 Caps Lock 亮着），按小写收进问题
-        let c = if question && english && c.is_ascii_uppercase() {
-            c.to_ascii_lowercase()
-        } else {
-            c
-        };
-        host::with(|h| h.engine.set_english_mode(english_candidates && !question));
         let (page_previous, page_next) =
             host::with(|h| h.page_keys).unwrap_or(qingjian_platform::DEFAULT_PAGE_KEYS);
-        // 英文模式且不给英文候选 = 纯直通，跟系统 ABC 键盘一样：这一键整个交给应用，青简不接、不组句、
-        // 不转全角标点。没在组句的键在 `dispatch_event` 里已经整个放行，走到这里只可能是组句中途
-        // 候选又关了，先把敲的原样上屏，别留拼音幽灵文本；问字模式是显式按出来的，不收在这一步。
-        if english && !english_candidates && !question {
-            if composing {
-                self.commit_raw(client);
-                host::with(|h| h.engine.note_passthrough(c));
-            }
-            return false;
-        }
-        // 英文候选：字母进缓冲区，候选来自英文词表。空格选高亮（词上屏后空格照样交给应用）、数字选当前页第 N 个；
-        // 数字对应的格子没有候选（kubectl 这类词表没有的词、候选不足 N 个）时是标识符的一部分（foo1）。
-        // 回车、标点先把敲的字母原样上屏再交给应用
-        if english && !question {
-            // 按着 Shift 打的大写进缓冲区（词表里有 `GitHub` 这类）；Caps Lock 只管大小写，
-            // 亮着时字母不分按没按 Shift 都以大写送来，收回小写去匹配词表
-            let letter = if modifiers::caps_lock_on() {
-                c.to_ascii_lowercase()
-            } else {
-                c
-            };
-            if composing
-                && let Some(offset) = c.to_digit(10).filter(|d| *d > 0)
-                && let Some(index) =
-                    host::with(|h| h.session.index_on_page(offset as usize - 1)).flatten()
-            {
-                return self.commit_index(index, client);
-            }
-            if c.is_ascii_alphabetic() || (composing && c.is_ascii_digit()) {
-                host::with(|h| h.engine.push(letter));
-                self.refresh(client);
-                return true;
-            }
-            if composing {
-                if c == ' ' {
-                    self.commit_highlighted(client);
-                } else {
-                    self.commit_raw(client);
-                }
-            }
-            host::with(|h| h.engine.note_passthrough(c));
-            return false;
-        }
         // 表达式模式（v 开头）：数字与运算符进缓冲区，不当选词 / 翻页键
         let expression = composing && host::with(|h| h.engine.expression_mode()).unwrap_or(false);
         // 英文直输段（缓冲区里已有 `-` 这类字符）：可见字符一律追加，空格 / 回车整段原样上屏
@@ -212,13 +138,7 @@ impl QingjianInputController {
                 }
             }
         }
-        // 英文模式任何路径都不能误入中文全角转换（例如英文候选组句结束时的括号）。
-        // 中文模式下照常转全角；其他字符原样交给应用。
-        let punctuated = if english_punctuation_is_passthrough(english, c) {
-            None
-        } else {
-            host::with(|h| h.engine.punctuate(c)).flatten()
-        };
+        let punctuated = host::with(|h| h.engine.punctuate(c)).flatten();
         match punctuated {
             Some(full_width) => {
                 client.insert_text(full_width);
@@ -265,15 +185,5 @@ mod tests {
             shifted_uppercase('C', modifiers(true)),
             "⇧ + C 才是 Shift 输入"
         );
-    }
-
-    /// 英文模式的括号等 ASCII 标点不能走中文全角转换；中文模式仍保留原有转换路径。
-    #[test]
-    fn english_punctuation_stays_ascii() {
-        for c in ['(', ')', '[', ']', ',', '.', '?', '!'] {
-            assert!(english_punctuation_is_passthrough(true, c), "{c}");
-            assert!(!english_punctuation_is_passthrough(false, c), "{c}");
-        }
-        assert!(!english_punctuation_is_passthrough(true, 'a'));
     }
 }

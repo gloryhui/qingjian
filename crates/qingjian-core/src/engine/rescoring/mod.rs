@@ -13,11 +13,35 @@ mod worker;
 mod tests;
 
 use super::*;
+use std::collections::HashSet;
 
 pub(crate) use cache::NeuralCache;
 pub(crate) use worker::RescoreWorker;
 
 impl Engine {
+    /// 文本只占一个重排名额；同文本的各条词路径都要参加分数替换，个人证据和代价可能不同。
+    pub(super) fn retain_neural_eligible_by_text<T>(
+        &self,
+        paths: &mut Vec<T>,
+        text: impl Fn(&T) -> &str,
+        score: impl Fn(&T) -> f64,
+    ) {
+        if !self.has_sentence_scorer() || paths.len() < 2 {
+            return;
+        }
+        let best = paths
+            .iter()
+            .map(&score)
+            .max_by(f64::total_cmp)
+            .expect("nonempty path pool");
+        let floor = best - self.neural_margin;
+        let eligible: HashSet<String> = paths
+            .iter()
+            .filter(|path| score(path) >= floor)
+            .map(|path| text(path).to_owned())
+            .collect();
+        paths.retain(|path| eligible.contains(text(path)));
+    }
     /// 接了重打分器（同步或异步）。
     pub fn has_sentence_scorer(&self) -> bool {
         self.sentence_scorer.is_some()
@@ -44,8 +68,15 @@ impl Engine {
     /// 把几条整句路径按「路径分 + λ·(神经分 − 静态分)」重排。缓存里缺分的：同步打分器当场补，异步的先记下等壳来取；
     /// 有任何一条没分就不动顺序（半截重排比不重排还糟）。
     pub(super) fn rescore_paths(&self, paths: &mut [Conversion]) {
+        if self.rescore_path_scores(paths) {
+            paths.sort_by(|a, b| b.score.total_cmp(&a.score));
+        }
+    }
+
+    /// 更新分数但保留路径与调用方索引的对应关系。
+    pub(super) fn rescore_path_scores(&self, paths: &mut [Conversion]) -> bool {
         if paths.len() < 2 || !self.has_sentence_scorer() {
-            return;
+            return false;
         }
         let context = self.rescoring_context();
         let mut cache = self.neural_cache.borrow_mut();
@@ -62,7 +93,7 @@ impl Engine {
                     let texts: Vec<&str> = missing.iter().map(String::as_str).collect();
                     let scores = scorer.score(&context, &texts);
                     if scores.len() != texts.len() {
-                        return;
+                        return false;
                     }
                     for (text, score) in texts.iter().zip(scores) {
                         cache.insert(text, score);
@@ -72,7 +103,7 @@ impl Engine {
                     for text in &missing {
                         cache.want(text);
                     }
-                    return;
+                    return false;
                 }
             }
         }
@@ -81,12 +112,8 @@ impl Engine {
             let neural = cache.get(&path.text).expect("filled above");
             path.score += lambda * (neural - path.static_score);
         }
-        paths.sort_by(|a, b| {
-            b.score
-                .partial_cmp(&a.score)
-                .unwrap_or(std::cmp::Ordering::Equal)
-        });
         self.last_rescored.set(true);
+        true
     }
 
     /// 最近一次查询里有整句路径还没拿到神经分：壳该在用户停顿后调 [`Self::request_rescoring`]。

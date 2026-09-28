@@ -49,9 +49,8 @@ pub struct GeneralConfig {
     /// 组句中的拼音显示在行内、候选窗口还是两处都显示。
     pub preedit: PreeditMode,
 
-    /// 英文模式（单击切换键切过去）是否给英文候选（补全与拼错纠正）。关掉就是纯直通：这一模式下按键整个
-    /// 交给应用，与系统英文键盘一致。缺省开；macOS 首次运行写出的配置里是关（见 `template_english_candidates!`），
-    /// 老配置的写法不变。
+    /// Windows / Linux 英文模式是否给英文候选（补全与拼错纠正）；关掉后按键交给应用。
+    /// macOS 保留此字段的配置兼容，但「英」始终纯直通，不读取此开关。
     pub english_candidates: bool,
 
     /// 繁体输出模式。
@@ -71,7 +70,7 @@ pub struct GeneralConfig {
     /// Windows 悬浮状态条上可点切换；macOS 在偏好设置中选择默认模式。
     pub full_width_punctuation: bool,
 
-    /// 英文模式下的同一件事，中英各记一份；缺省半角。只有 Windows 用（macOS 英文模式一律半角）。
+    /// 英文模式下的同一件事，中英各记一份；缺省半角。只有 Windows 用（macOS「英」由系统与应用处理标点）。
     pub english_full_width_punctuation: bool,
 
     /// 辅码触发键：拼音打完之后敲它进辅码态，缺省 `;`。校验 = 单字符、ASCII 可打印、

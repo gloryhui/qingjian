@@ -41,11 +41,11 @@ impl Settings {
                 Ok(false) => {}
                 Err(error) => tracing::warn!(%error, "写配置模板失败"),
             }
-            // 老配置升级后第一次启动改一次英文候选开关（之后用户在偏好设置里打开的不再被动）
+            // 老配置迁移仅整理历史开关；macOS 英文直通路由不读取它。
             match Config::migrate_macos_pure_english(&path) {
                 Ok(true) => tracing::info!(
                     path = %path.display(),
-                    "英文模式已迁到纯直通（一次性的改动，偏好设置 → 通用可以改回去）"
+                    "macOS 英文模式已改为系统直通，历史英文候选设置不再生效"
                 ),
                 Ok(false) => {}
                 Err(error) => tracing::warn!(%error, "英文模式的迁移没做成，配置保持原样"),
