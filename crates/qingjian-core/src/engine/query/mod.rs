@@ -655,10 +655,9 @@ impl Engine {
             |index, syllable| expanded.cost(index, syllable),
             &mut self.span_cache.borrow_mut(),
         );
-        // 与最优路径差得太远的不参与：那种差距多半是个人 n-gram 拉开的
+        // 与最优路径差得太远的不参与：那种差距多半是个人 n-gram 拉开的。
+        self.retain_neural_eligible(&mut paths, |path| path.score);
         if paths.len() > 1 {
-            let floor = paths[0].score - self.neural_margin;
-            paths.retain(|p| p.score >= floor);
             self.rescore_paths(&mut paths);
         }
         paths.into_iter().next()

@@ -22,7 +22,7 @@ TSV 解析、查询与生成工具把 `lue` / `nue` 统一成 `lve` / `nve`。
 
 ## crates/qingjian-core
 
-整句候选在有限预算内比较 parser 首条和一条优先有整段词级证据的切分；用户用 `'` 分开的合法完整音节直接固定为该音节。`engine/query/joint.rs` 把胜出切分放到 `Query.segmentations[0]`，因此顶部拼音与首选候选对齐。神经模型启用时，`sentence/viterbi/` 在同一词格保留不同句首词的前驱，并在束与最终 Top-K 为不同句首预留名额；`SearchDiagnostics` 与 CLI 的 `path_trace` 示例可按需查看词格、静态/兜底/个人分数、前驱竞争和剪枝。无神经模型时仍只输出静态路径的首选；静态 bigram 无法可靠表达较远的句内语义，见 [Issue #8 诊断](issue-8-joint-decoder.md)。
+整句候选在有限预算内比较 parser 首条和一条优先有整段词级证据的切分；用户用 `'` 分开的合法完整音节直接固定为该音节。`engine/query/joint.rs` 只在实际首选与读音一致时把切分放到 `Query.segmentations[0]`；已有完整词的词级个人选择和上下文排序保留。神经模型启用时，`sentence/viterbi/` 把词路径传过后续词格，`sentence/diversity.rs` 按路径前缀逐层保留共同前缀后的分歧；全局六条重排预算再协调两种切分和结构代表。旧整句入口与联合入口均先按完整池最高总分和 `neural_margin` 过滤，才分配重排名额。`SearchDiagnostics` 与 CLI 的 `path_trace` 示例可按需查看词格、静态/兜底/个人分数、前驱竞争和剪枝。无神经模型时仍只输出静态路径的首选；静态 bigram 无法可靠表达较远的句内语义，见 [Issue #8 诊断](issue-8-joint-decoder.md)。
 
 模块：`composition`（缓冲区与光标；中文模式下 Shift+字母按小写进 `buffer` 参与匹配、大写记在 `shifted`，`typed_text` 还原后用于原样上屏）/ `parser` / `correction`（拼写纠错：整段一处编辑的候选纠正 + `typo` 音节级敲错变体表，后者进整句词图当带代价的边）/
 `candidate` / `ranking` / `shortcut` / `sentence` / `fuzzy` / `shuangpin`（双拼：七套方案键位表、键 → 全拼解码与消耗换算）/ `zhuyin`（大千注音：键 → 注音符号 → 拼音，`[general] zhuyin` 开关，声调只判音节完整不进查询）/ `emoji` /

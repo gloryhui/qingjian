@@ -1,8 +1,9 @@
 //! 多种拼音切分共享整句评分和神经重排，首选切分随首选候选返回。
 
 use crate::candidate::{Candidate, CandidateKind};
-use crate::engine::{Engine, Learner, RESCORE_PATHS};
+use crate::engine::{Engine, Learner, RESCORE_PATHS, choice_key};
 use crate::parser::Segmentation;
+use crate::sentence::diversity::representative_indices;
 use crate::sentence::{self, Conversion};
 
 use super::leading_english;
@@ -82,33 +83,20 @@ impl Engine {
                 .collect();
             ranked.extend(found);
         }
-        ranked.sort_by(|a, b| b.1.score.total_cmp(&a.1.score));
+        ranked.sort_by(|a, b| {
+            b.1.score
+                .total_cmp(&a.1.score)
+                .then_with(|| a.1.text.cmp(&b.1.text))
+                .then_with(|| a.0.cmp(&b.0))
+        });
         if ranked.is_empty() {
             return None;
         }
         if k == 1 {
             return Some(ranked.remove(0));
         }
-        // 半数名额给不同拼音切分的最佳路径，其余按总分补齐；文本去重避免一条汉字句占多席。
-        let mut selected: Vec<(usize, Conversion)> = Vec::new();
-        for (index, path) in &ranked {
-            if selected.len() >= k / 2 {
-                break;
-            }
-            if !selected.iter().any(|(seen, _)| seen == index)
-                && !selected.iter().any(|(_, seen)| seen.text == path.text)
-            {
-                selected.push((*index, path.clone()));
-            }
-        }
-        for (index, path) in ranked {
-            if selected.len() >= k {
-                break;
-            }
-            if !selected.iter().any(|(_, seen)| seen.text == path.text) {
-                selected.push((index, path));
-            }
-        }
+        self.retain_neural_eligible(&mut ranked, |(_, path)| path.score);
+        let selected = select_joint_paths(&ranked, k);
         let mut paths: Vec<Conversion> = selected.iter().map(|(_, path)| path.clone()).collect();
         self.rescore_paths(&mut paths);
         let best = paths.into_iter().next()?;
@@ -135,7 +123,15 @@ impl Engine {
                     && candidate.text == conversion.text
                     && candidate.syllables == conversion.syllables
             }) {
-                let promote = index > 0
+                let ranked_full_word = items
+                    .iter()
+                    .find(|candidate| candidate.kind == CandidateKind::Chinese)
+                    .is_some_and(|candidate| {
+                        candidate.syllables.concat()
+                            == choice_key(self.composition.scope(), self.composition.scope().len())
+                    });
+                let promote = !ranked_full_word
+                    && index > 0
                     && segmentations[0].syllables.len() >= 2
                     && segmentations[index].syllables.iter().all(|p| p.complete);
                 if promote {
@@ -143,9 +139,7 @@ impl Engine {
                     let target = leading_english(items);
                     items.insert(target, candidate);
                 }
-                if promote || items.first().is_some_and(|c| c.text == conversion.text) {
-                    segmentations.swap(0, index);
-                }
+                align_first_chinese_segmentation(items, segmentations);
             } else if index > 0
                 && conversion.syllables.len() == segmentations[index].syllables.len()
             {
@@ -161,10 +155,162 @@ impl Engine {
             }
             return None;
         }
+        let duplicate_is_first = !conversion.altered()
+            && items.get(leading_english(items)).is_some_and(|first| {
+                first.kind == CandidateKind::Chinese
+                    && first.text == conversion.text
+                    && first.syllables == conversion.syllables
+            });
         let candidate = self.sentence_candidate(items, &segmentations[index], conversion);
-        if candidate.is_some() {
+        if candidate.is_some() || duplicate_is_first {
             segmentations.swap(0, index);
         }
         candidate
+    }
+}
+
+fn align_first_chinese_segmentation(items: &[Candidate], segmentations: &mut [Segmentation]) {
+    let Some(first) = items.get(leading_english(items)) else {
+        return;
+    };
+    if first.kind != CandidateKind::Chinese {
+        return;
+    }
+    if let Some(index) = segmentations.iter().position(|segmentation| {
+        segmentation.syllables.len() == first.syllables.len()
+            && segmentation
+                .syllables
+                .iter()
+                .zip(&first.syllables)
+                .all(|(syllable, reading)| syllable.text == *reading)
+    }) {
+        segmentations.swap(0, index);
+    }
+}
+
+/// 两种切分轮流取各自词路径的分歧代表，再按总分填满剩余名额。
+fn select_joint_paths(ranked: &[(usize, Conversion)], k: usize) -> Vec<(usize, Conversion)> {
+    let mut groups: Vec<usize> = Vec::new();
+    for (segmentation, _) in ranked {
+        if !groups.contains(segmentation) {
+            groups.push(*segmentation);
+        }
+    }
+    let representatives: Vec<Vec<usize>> = groups
+        .iter()
+        .map(|segmentation| {
+            let indices: Vec<usize> = ranked
+                .iter()
+                .enumerate()
+                .filter_map(|(index, (seen, _))| (seen == segmentation).then_some(index))
+                .collect();
+            let routes: Vec<String> = indices
+                .iter()
+                .map(|index| {
+                    ranked[*index]
+                        .1
+                        .words
+                        .iter()
+                        .map(|word| word.text.as_str())
+                        .collect::<Vec<_>>()
+                        .join("\0")
+                })
+                .collect();
+            let refs: Vec<&str> = routes.iter().map(String::as_str).collect();
+            representative_indices(&refs, k)
+                .into_iter()
+                .map(|index| indices[index])
+                .collect()
+        })
+        .collect();
+    let mut selected = Vec::new();
+    let mut round = 0;
+    while selected.len() < k && representatives.iter().any(|group| group.len() > round) {
+        for group in &representatives {
+            if let Some(&index) = group.get(round) {
+                let path = &ranked[index];
+                if !selected
+                    .iter()
+                    .any(|(_, seen): &(usize, Conversion)| seen.text == path.1.text)
+                {
+                    selected.push(path.clone());
+                    if selected.len() == k {
+                        break;
+                    }
+                }
+            }
+        }
+        round += 1;
+    }
+    for path in ranked {
+        if selected.len() >= k {
+            break;
+        }
+        if !selected.iter().any(|(_, seen)| seen.text == path.1.text) {
+            selected.push(path.clone());
+        }
+    }
+    selected
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::sentence::SentenceWord;
+
+    fn path(text: &str, first: &str, score: f64) -> Conversion {
+        Conversion {
+            text: text.to_owned(),
+            syllables: Vec::new(),
+            words: vec![
+                SentenceWord {
+                    text: first.to_owned(),
+                    syllables: Vec::new(),
+                    placeholder: false,
+                },
+                SentenceWord {
+                    text: text.to_owned(),
+                    syllables: Vec::new(),
+                    placeholder: false,
+                },
+            ],
+            score,
+            static_score: score,
+            penalty: 0.0,
+        }
+    }
+
+    #[test]
+    fn global_budget_keeps_segmentation_and_structural_representatives() {
+        let mut ranked = vec![
+            (0, path("A1", "晚", -10.0)),
+            (0, path("A2", "晚", -10.1)),
+            (0, path("A3", "晚", -10.2)),
+            (1, path("B1", "甲", -10.3)),
+            (0, path("A4", "万", -10.4)),
+            (0, path("A5", "万", -10.5)),
+            (1, path("B2", "乙", -10.6)),
+            (1, path("B3", "丙", -10.7)),
+            (0, path("A_target", "玩", -10.9)),
+        ];
+        let selected = select_joint_paths(&ranked, 6);
+        assert!(selected.iter().any(|(_, path)| path.text == "A_target"));
+        assert!(selected.iter().any(|(index, _)| *index == 1));
+        let again = select_joint_paths(&ranked, 6);
+        assert_eq!(
+            selected
+                .iter()
+                .map(|(_, path)| &path.text)
+                .collect::<Vec<_>>(),
+            again.iter().map(|(_, path)| &path.text).collect::<Vec<_>>()
+        );
+        ranked.push((0, path("A1", "晚", -10.95)));
+        assert_eq!(
+            select_joint_paths(&ranked, 6)
+                .iter()
+                .filter(|(_, path)| path.text == "A1")
+                .count(),
+            1
+        );
     }
 }

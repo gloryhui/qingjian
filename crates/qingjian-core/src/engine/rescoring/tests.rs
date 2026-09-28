@@ -51,6 +51,17 @@ fn sync_scorer_reorders_paths_in_place() {
 }
 
 #[test]
+fn margin_uses_true_pool_max_and_total_personal_score() {
+    let engine =
+        engine().with_sentence_scorer(Box::new(Prefers("弱路径")), Some(1.0), Some(4.0), None);
+    let mut paths = vec![path("弱路径", -11.0), path("个人优势路径", -5.0)];
+    engine.retain_neural_eligible(&mut paths, |path| path.score);
+    assert_eq!(texts(&paths), ["个人优势路径"]);
+    engine.rescore_paths(&mut paths);
+    assert_eq!(texts(&paths), ["个人优势路径"]);
+}
+
+#[test]
 fn async_scorer_waits_for_the_shell_to_request_and_poll() {
     let mut engine =
         engine().with_async_sentence_scorer(Box::new(Prefers("开放")), Some(0.5), None, None);

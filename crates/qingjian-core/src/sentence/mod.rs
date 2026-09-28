@@ -15,6 +15,7 @@
 mod context;
 mod conversion;
 mod diagnostics;
+pub(crate) mod diversity;
 mod interpolation;
 mod language_model;
 mod personal;

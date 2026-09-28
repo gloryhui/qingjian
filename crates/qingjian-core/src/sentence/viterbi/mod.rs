@@ -5,6 +5,7 @@
 
 use qingjian_dictionary::{Dictionary, Match, SyllablePattern};
 
+use super::diversity::representative_indices;
 use super::{
     ABBREVIATED_SPAN_CANDIDATES, BEAM_WIDTH, Context, Conversion, LanguageModel,
     MAX_WORD_SYLLABLES, MIN_PARTIAL_LETTERS, PathDiagnostic, Personal, SPAN_CANDIDATES,
@@ -24,8 +25,8 @@ struct Node {
     /// 词。
     text: String,
 
-    /// 路径的第一个词；同词格里的不同句首选择需要保留到整句重排。
-    first_word: String,
+    /// 词路径，以 NUL 分隔；共同前缀后的分歧在后续词格仍可辨认。
+    route: String,
 
     /// 词的音节。
     syllables: Vec<String>,
@@ -234,7 +235,7 @@ fn convert_paths_inner(
     nodes[0].push(Node {
         start: 0,
         text: String::new(),
-        first_word: String::new(),
+        route: String::new(),
         syllables: Vec::new(),
         score: 0.0,
         static_score: 0.0,
@@ -304,17 +305,17 @@ fn convert_paths_inner(
                         - previous.score
                         - static_step.unwrap_or(fallback);
                     let selection_bonus = previous.selection_bonus + bonus;
-                    let first_word = if k == 1 {
+                    let route = if k == 1 {
                         String::new()
                     } else if start == 0 {
                         hit.text.clone()
                     } else {
-                        previous.first_word.clone()
+                        format!("{}\0{}", previous.route, hit.text)
                     };
                     nodes[end].push(Node {
                         start,
                         text: hit.text.clone(),
-                        first_word,
+                        route,
                         syllables: hit.syllables.clone(),
                         score: score + bonus - hit.penalty,
                         static_score,
@@ -344,17 +345,17 @@ fn convert_paths_inner(
             let fallback_score = nodes[start][back].fallback_score + UNKNOWN_LOG_PROB;
             let personal_delta = nodes[start][back].personal_delta;
             let selection_bonus = nodes[start][back].selection_bonus;
-            let first_word = if k == 1 {
+            let route = if k == 1 {
                 String::new()
             } else if start == 0 {
                 text.to_owned()
             } else {
-                nodes[start][back].first_word.clone()
+                format!("{}\0{}", nodes[start][back].route, text)
             };
             nodes[start + 1].push(Node {
                 start,
                 text: text.to_owned(),
-                first_word,
+                route,
                 syllables: vec![text.to_owned()],
                 score,
                 static_score,
@@ -371,16 +372,11 @@ fn convert_paths_inner(
     let mut paths: Vec<Conversion> = Vec::with_capacity(k.min(nodes[n].len()));
     let mut indices: Vec<usize> = (0..nodes[n].len()).collect();
     if k > 1 {
-        let mut seen = std::collections::HashSet::new();
-        let mut diverse = Vec::new();
-        for index in &indices {
-            if seen.insert(nodes[n][*index].first_word.as_str()) {
-                diverse.push(*index);
-            }
-            if diverse.len() >= k.div_ceil(2) {
-                break;
-            }
-        }
+        let routes: Vec<&str> = indices
+            .iter()
+            .map(|index| nodes[n][*index].route.as_str())
+            .collect();
+        let mut diverse = representative_indices(&routes, k.div_ceil(2));
         indices.retain(|index| !diverse.contains(index));
         diverse.extend(indices);
         indices = diverse;
@@ -533,11 +529,13 @@ fn diverse_predecessors(
         })
         .collect();
     scored.sort_by(|a, b| b.0.total_cmp(&a.0));
-    let mut first_words = std::collections::HashSet::new();
-    scored
+    let routes: Vec<&str> = scored
+        .iter()
+        .map(|(_, index)| nodes[start][*index].route.as_str())
+        .collect();
+    representative_indices(&routes, 3)
         .into_iter()
-        .filter(|(_, index)| first_words.insert(nodes[start][*index].first_word.as_str()))
-        .take(3)
+        .map(|index| scored[index])
         .collect()
 }
 
@@ -571,15 +569,11 @@ fn prune(
     });
     let mut retained: Vec<usize> = Vec::with_capacity(BEAM_WIDTH);
     if diverse {
-        let mut first_words = std::collections::HashSet::new();
-        for (index, node) in nodes[position].iter().enumerate() {
-            if first_words.insert(node.first_word.as_str()) {
-                retained.push(index);
-            }
-            if retained.len() >= BEAM_WIDTH / 2 {
-                break;
-            }
-        }
+        let routes: Vec<&str> = nodes[position]
+            .iter()
+            .map(|node| node.route.as_str())
+            .collect();
+        retained = representative_indices(&routes, BEAM_WIDTH / 2);
     }
     for index in 0..nodes[position].len() {
         if retained.len() >= BEAM_WIDTH {

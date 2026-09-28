@@ -129,3 +129,7 @@ fn multi_syllable_homophone_path_reaches_whole_sentence_scorer() {
     );
     assert!(seen.lock().unwrap().iter().any(|text| text == "医生不想来"));
 }
+
+mod async_rescoring;
+mod diversity;
+mod ranking;

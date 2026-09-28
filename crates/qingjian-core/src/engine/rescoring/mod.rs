@@ -18,6 +18,19 @@ pub(crate) use cache::NeuralCache;
 pub(crate) use worker::RescoreWorker;
 
 impl Engine {
+    /// 在分配重排预算前，用完整路径池的最高总分确定资格。
+    pub(super) fn retain_neural_eligible<T>(&self, paths: &mut Vec<T>, score: impl Fn(&T) -> f64) {
+        if !self.has_sentence_scorer() || paths.len() < 2 {
+            return;
+        }
+        let best = paths
+            .iter()
+            .map(&score)
+            .max_by(f64::total_cmp)
+            .expect("nonempty path pool");
+        let floor = best - self.neural_margin;
+        paths.retain(|path| score(path) >= floor);
+    }
     /// 接了重打分器（同步或异步）。
     pub fn has_sentence_scorer(&self) -> bool {
         self.sentence_scorer.is_some()
