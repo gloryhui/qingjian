@@ -19,39 +19,28 @@ mod settings;
 use std::cell::RefCell;
 use std::path::PathBuf;
 
-use objc2::MainThreadMarker;
 use objc2_app_kit::{NSPasteboard, NSPasteboardTypeString};
 use objc2_foundation::{NSProcessInfo, NSRect, NSString};
 use qingjian_core::{
-    Candidate, CandidateKind, Cell, CloudWord, EmojiTable, Engine, FuzzyRules, Language, ModeKeys,
-    NoGlossFiller, NoInputLogger, NoPredictor, NoTranslator, Prediction,
+    Candidate, CandidateKind, CloudWord, Engine, Language, NoInputLogger, Prediction,
 };
-use qingjian_dictionary::{Dictionary, WordList};
-use qingjian_learning::{FrequencyLearner, InputLog, UsageStats, VocabularyBook};
-use qingjian_lm::BigramModel;
+use qingjian_learning::InputLog;
 use qingjian_platform::extra_dictionaries;
 use qingjian_platform::{
-    AppsConfig, CandidateRenderer, DEFAULT_ENGLISH_CANDIDATES_OFF, DictionariesConfig,
-    GeneralConfig, KeyCombo, LEARNING_LANGUAGE_OFF, LayoutMode, LocalModelConfig, LogLevel,
-    Modifiers, PAGE_KEY_OPTIONS, PreeditMode, Scheme, ShortcutConfig, ThemeMode, UpdateChannel,
+    DictionariesConfig, KeyCombo, LayoutMode, LocalModelConfig, Modifiers, PreeditMode,
 };
-use qingjian_predict::{
-    CloudGlossFiller, CloudPredictor, ConnectionTest, PredictConfig, PredictError,
-};
-use qingjian_translate::{Glossary, LayeredTranslator, LevelTable, PersonalGlossary};
+use qingjian_predict::{ConnectionTest, PredictConfig, PredictError};
 
-use crate::app::BundleInfo;
 use crate::app::{Settings, logging, paths};
-use crate::candidates::{CandidateWindow, Frame, Preedit, Row};
-use crate::error::HostError;
-use crate::menubar::{InputMenu, MenuAction, ModeIndicator};
-use crate::preferences::{PreferencesWindow, Setting, SettingValue, UpdateStatus};
+use crate::candidates::{CandidateWindow, Preedit};
+use crate::menubar::{InputMenu, ModeIndicator};
+use crate::preferences::{PreferencesWindow, UpdateStatus};
 
 use cloud::{CloudTestMonitor, PredictMonitor};
 use config::{ConfigWatch, TextReplacement};
 pub use dictionaries::DictionaryInfo;
 pub use init::init;
-use mode::ModeState;
+pub(crate) use mode::ModeState;
 use model::RescoreMonitor;
 use presenting::Notice;
 pub use presenting::TranslationJob;
@@ -145,14 +134,8 @@ pub struct Host {
     /// 中 / 英模式与单击切换键的状态，见 [`ModeState`]。进程级一份，所有应用共用。
     pub mode: ModeState,
 
-    /// 英文模式是否给英文候选（配置 `[general] english_candidates`）。关着时英文模式是纯直通。
-    pub english_candidates: bool,
-
     /// 上次从系统读到的文本替换（激活输入法时重读），`[general] system_text_replacements` 开着时并进自定义短语。
     text_replacements: Vec<TextReplacement>,
-
-    /// 按应用的行为（配置 `[apps]`）：哪些应用里英文模式不给候选。
-    pub apps: AppsConfig,
 
     /// 联想结果轮询定时器。
     pub monitor: PredictMonitor,

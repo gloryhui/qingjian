@@ -7,7 +7,12 @@ pub(super) use text_replacements::TextReplacement;
 pub(super) use watch::ConfigWatch;
 
 use super::init::load_glossary;
-use super::*;
+use super::{Host, LEARNING_FLUSH_INTERVAL};
+use crate::app::{logging, paths};
+use crate::preferences::UpdateStatus;
+use qingjian_core::{Language, NoGlossFiller, NoPredictor, NoTranslator};
+use qingjian_platform::{GeneralConfig, Scheme};
+use qingjian_predict::{CloudGlossFiller, CloudPredictor};
 
 impl Host {
     /// 把当前配置推给 Engine 与界面：模糊音 / 模式键 / 翻页 / 外观直接设；学习语言变了换释义表；
@@ -38,8 +43,6 @@ impl Host {
         // 中英模式：切换键与总开关来自配置，模式本身是输入法自己记的那一份
         self.mode
             .set_settings(config.shortcut.switch_mode, config.general.english_mode);
-        self.english_candidates = config.general.english_candidates;
-        self.apps = config.apps.clone();
         self.window.set_theme(config.general.theme);
         self.window.set_layout(config.general.layout);
         if self.layout != config.general.layout

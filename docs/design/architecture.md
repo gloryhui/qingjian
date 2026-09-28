@@ -365,9 +365,9 @@ CC-CEDICT 表（`dict-convert cedict`）保留为备用来源，覆盖面广但�
   （每页候选数、翻页键、外观、☁︎ 标识、菜单勾选、设置窗口控件）。启动、菜单开关、设置窗口、`host/config/watch.rs`
   每秒一次的 mtime 监视全都走它；三个入口都只写 `config.toml`，不各存一套状态。解析失败沿用上一份，错误显示在菜单与设置窗口里。
   按键走第一层协议 `handleEvent:client:`（实现它就不再收到 `inputText:` / `didCommandBySelector:`），在 `dispatch_event` 里自己分发：
-  先认当前应用（`activateServer:` 不保证报得出 bundle identifier，直通与按应用开关都要用它）、登录窗口一律交还系统，
-  `FlagsChanged` 交给单击判定，`KeyDown` 依次是**纯直通 → 确认译文 → 翻译快捷键 → 组句中的修饰键 + 数字 → 命令键 → 文本**（先后顺序是
-  `controller/route.rs::Route::decide` 的判定，有表可测）。**组句期间不认识的编辑动作一律吞掉**：返回 NO 会让应用自己处理方向键，应用一动光标就把 marked text 丢了，
+  `KeyDown` 首先只看模式状态；macOS 英文模式立即交还整件事件，早于应用识别、字符读取与 Engine 调用；其余事件再认应用（`activateServer:` 不保证报得出
+  bundle identifier）、处理登录窗口与 `FlagsChanged` 单击判定。中文模式 `KeyDown` 依次是**确认译文 → 翻译快捷键 → 组句中的修饰键 + 数字 → 命令键 → 文本**（先后顺序是
+  `controller/route/mod.rs::Route::decide` 的判定，有表可测）。**组句期间不认识的编辑动作一律吞掉**：返回 NO 会让应用自己处理方向键，应用一动光标就把 marked text 丢了，
   而我们的缓冲区和候选框还在（2026-09-03 踩过）。
 - 中英模式只有「单击 `[shortcut] switch_mode` 勾选的键」这一个来源，**Caps Lock 只管大小写、不参与模式**（Windows 同一套机制，判定各在自己的壳里）。
   macOS 的判定要落到物理键位：`NSEventModifierFlags` 是聚合的，分不出左右两只 Shift，也看不出按下 Shift 之前是否已经搭着 ⌘ / ⌥ / ⌃，
@@ -375,9 +375,9 @@ CC-CEDICT 表（`dict-convert cedict`）保留为备用来源，覆盖面广但�
   每次判定后再拿聚合标志 `resync`（输入法可能在按住 Shift 时才被激活，抬起事件会漏）。纯直通模式下这一键整个交给应用，连翻译快捷键都不拦，
   且切模式时一并 `end_translation`，不让待确认的译文漏进新模式。`[general] shift_letter = "compose"` 只认真正按住 Shift 打出的大写，
   Caps Lock 送来的大写仍旧直接交给应用。偏好设置里没有切换键与内置英文模式的控件，那两项改配置文件。
-- 老配置升到纯直通：`Config::migrate_macos_pure_english` 在本壳读配置前跑一次，把 `[general] english_candidates` 改成 `false`（缺这一项的补上）。
-  印记文件 `.pure-english-migrated` **最后落**（读通 → 要改时先改配置成功 → 才落印记），记的是「这次检查过了」而不是「真的改了」：
-  新装模板本来就是 `false`，也要落印记，否则用户之后在「通用」页勾上的 `true` 会被下一次启动改回去。哪一步失败都不留印记、下次重试，只警告，保持原样。
+- 老配置的兼容迁移：`Config::migrate_macos_pure_english` 在本壳读配置前跑一次，把历史 `[general] english_candidates` 改成 `false`（缺这一项的补上）。
+  macOS 英文直通路由不读取这个字段，偏好设置也不再提供相关开关；迁移只整理旧配置。印记文件 `.pure-english-migrated` **最后落**（读通 → 要改时先改配置成功 → 才落印记），
+  记的是「这次检查过了」而不是「真的改了」。哪一步失败都不留印记、下次重试，只警告，保持原样。
 - `define_class!` 的类在首次调用 `class()` 时才注册到 ObjC 运行时，而 IMKServer 初始化时就按
   Info.plist 的类名查找，找不到会**静默退回基类**，症状是按键全部透传、像在打英文。
   必须先 `QingjianInputController::class()` 再建 IMKServer（2026-09-03 踩过）。
