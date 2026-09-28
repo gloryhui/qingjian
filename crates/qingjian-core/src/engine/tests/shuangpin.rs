@@ -109,6 +109,43 @@ fn shuangpin_records_choices_by_full_pinyin() {
 }
 
 #[test]
+fn morf_and_equivalent_shuangpin_keys_only_match_mo_ren() {
+    for scheme in Scheme::ALL {
+        let keys: String = ["mo", "ren"]
+            .into_iter()
+            .flat_map(|syllable| scheme.encode(syllable).unwrap())
+            .collect();
+        if scheme == Scheme::Xiaohe {
+            assert_eq!(keys, "morf");
+        }
+        let decoded = scheme.decode(&keys);
+        assert_eq!(decoded.pinyin(), "mo'ren", "{scheme}: {keys}");
+        assert!(decoded.is_complete());
+        let dictionary =
+            Dictionary::parse("默认\tmo ren\t5000\n磨人\tmo ren\t100\n没人\tmei ren\t50000\n")
+                .unwrap();
+        let mut engine = Engine::new(dictionary);
+        engine.set_shuangpin(Some(scheme));
+        engine.set_input(&keys);
+        assert!(engine.active_correction(&keys).is_none());
+        let items = engine.query().unwrap().candidates.items;
+        assert_eq!(items[0].text, "默认", "{scheme}: {keys}");
+        assert!(items.iter().all(|c| c.text != "没人"), "{scheme}: {keys}");
+    }
+}
+
+#[test]
+fn full_pinyin_moren_still_prefers_default_without_correction() {
+    let dictionary =
+        Dictionary::parse("默认\tmo ren\t5000\n磨人\tmo ren\t100\n没人\tmei ren\t50000\n").unwrap();
+    let mut engine = Engine::new(dictionary);
+    engine.set_input("moren");
+
+    assert!(engine.active_correction("moren").is_none());
+    assert_eq!(engine.query().unwrap().candidates.items[0].text, "默认");
+}
+
+#[test]
 fn shuangpin_moves_mode_keys_to_shifted_letters() {
     let mut engine = xiaohe();
     engine.set_input("v");
