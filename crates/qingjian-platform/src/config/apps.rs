@@ -94,8 +94,8 @@ pub const DEFAULT_ENGLISH_CANDIDATES_OFF: &[&str] = DEFAULT_ENGLISH_CANDIDATES_O
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct AppsConfig {
-    /// 英文模式（Caps Lock）下不给候选的应用。条目是 bundle identifier（`com.jetbrains.*`）或 exe 文件名（`Code.exe`），
-    /// `*` 结尾按前缀匹配。全局开关 `[general] english_candidates` 关着时这里不起作用。
+    /// Windows / Linux 英文模式下不给候选的应用，`*` 结尾按前缀匹配。
+    /// 全局开关 `[general] english_candidates` 关着时不起作用；macOS 仅保留配置兼容，「英」始终纯直通。
     pub english_candidates_off: Vec<String>,
 }
 

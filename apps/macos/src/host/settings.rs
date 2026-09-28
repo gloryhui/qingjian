@@ -1,9 +1,17 @@
 //! 菜单与偏好设置窗口的动作：只改 config.toml（或触发一次性操作），改完由 apply_config 统一生效。
 
+use super::Host;
 use super::diagnostics::{copy_to_pasteboard, open_with_system};
-use super::*;
+use crate::app::logging;
+use crate::menubar::MenuAction;
 use crate::preferences::DEFAULT_FONT_LABEL;
+use crate::preferences::{Setting, SettingValue};
+use qingjian_core::{FuzzyRules, ModeKeys};
 use qingjian_platform::ShiftLetter;
+use qingjian_platform::{
+    CandidateRenderer, KeyCombo, LEARNING_LANGUAGE_OFF, LayoutMode, LogLevel, Modifiers,
+    PAGE_KEY_OPTIONS, PreeditMode, Scheme, ShortcutConfig, ThemeMode, UpdateChannel,
+};
 
 impl Host {
     /// 写短语前读取文件；外部规则有变化时同步列表并请用户重新确认。
@@ -352,9 +360,6 @@ impl Host {
             (Setting::Traditional, SettingValue::Bool(on)) => {
                 self.settings.set_bool("general", "traditional", on);
             }
-            (Setting::EnglishCandidates, SettingValue::Bool(on)) => {
-                self.settings.set_bool("general", "english_candidates", on);
-            }
             (Setting::ChineseFirst, SettingValue::Bool(on)) => {
                 self.settings.set_bool("general", "chinese_first", on);
             }
@@ -366,16 +371,6 @@ impl Host {
                 };
                 self.settings
                     .set_value("general", "shift_letter", mode.key());
-            }
-            // 勾上写缺省的终端 / 编辑器列表，去掉写空表；手改过的列表勾一下就回缺省
-            (Setting::EnglishCandidatesOffInApps, SettingValue::Bool(on)) => {
-                let apps: toml_edit::Array = if on {
-                    DEFAULT_ENGLISH_CANDIDATES_OFF.iter().copied().collect()
-                } else {
-                    toml_edit::Array::new()
-                };
-                self.settings
-                    .set_value("apps", "english_candidates_off", apps);
             }
             // 弹出菜单按 Scheme::ALL 的顺序。写的是 [general] scheme（旧键 shuangpin 已并入它）：
             // 写旧键的话，配置里 scheme 的缺省值非空、解析时优先，用户选的方案会被静默忽略。

@@ -1,4 +1,4 @@
-//! 「通用」页：学习语言、每页候选数、输入方案、英文模式候选。
+//! 「通用」页：学习语言、每页候选数、输入方案与中文组句设置。
 
 use objc2::MainThreadMarker;
 use objc2::rc::Retained;
@@ -30,12 +30,6 @@ pub struct GeneralPage {
 
     /// 繁体输出模式。
     traditional: Retained<NSButton>,
-
-    /// 英文模式也给候选。
-    english: Retained<NSButton>,
-
-    /// 终端 / 编辑器里不给英文候选。
-    english_off_in_apps: Retained<NSButton>,
 
     /// 中英混输时中文候选排在英文词前。
     chinese_first: Retained<NSButton>,
@@ -134,24 +128,10 @@ impl GeneralPage {
         );
         let traditional = checkbox(mtm, "繁体输出", Setting::Traditional, target);
         row_checkbox(layout, &traditional);
-        let english = checkbox(mtm, "英文模式也给候选", Setting::EnglishCandidates, target);
-        row_checkbox(layout, &english);
         note(
             layout,
             mtm,
-            "不勾选时英文模式是纯直通：按键直接交给应用，与系统 ABC 键盘一样（新配置与升级后的老配置都默认如此）。勾上才给英文补全与拼写纠正，用 Tab 或方向键选词。",
-        );
-        let english_off_in_apps = checkbox(
-            mtm,
-            "但在终端和代码编辑器里不给",
-            Setting::EnglishCandidatesOffInApps,
-            target,
-        );
-        row_checkbox(layout, &english_off_in_apps);
-        note(
-            layout,
-            mtm,
-            "终端、iTerm、Warp、Ghostty、VS Code、Cursor、Zed、JetBrains、Xcode 等，那里的候选窗口会挡住应用自己的补全；名单可在配置文件里改。",
+            "切到「英」后，所有按键由 macOS、当前键盘布局与应用处理。青简不转换标点、不显示候选；中文模式仍可识别英文词。",
         );
         let chinese_first = checkbox(
             mtm,
@@ -184,8 +164,6 @@ impl GeneralPage {
             wubi,
             shuangpin_raw_preedit,
             traditional,
-            english,
-            english_off_in_apps,
             chinese_first,
             shift_letter,
             languages: languages.to_vec(),
@@ -224,13 +202,6 @@ impl GeneralPage {
         self.shuangpin_raw_preedit
             .setEnabled(general.scheme().is_shuangpin());
         set_checked(&self.traditional, general.traditional);
-        set_checked(&self.english, general.english_candidates);
-        set_checked(
-            &self.english_off_in_apps,
-            config.apps.has_english_candidates_off(),
-        );
-        self.english_off_in_apps
-            .setEnabled(general.english_candidates);
         set_checked(&self.chinese_first, general.chinese_first);
         set_checked(&self.shift_letter, general.shift_letter.compose());
     }
