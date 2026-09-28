@@ -22,6 +22,8 @@ TSV 解析、查询与生成工具把 `lue` / `nue` 统一成 `lve` / `nve`。
 
 ## crates/qingjian-core
 
+整句候选在有限预算内比较 parser 首条和一条优先有整段词级证据的切分；用户用 `'` 分开的合法完整音节直接固定为该音节。`engine/query/joint.rs` 只在实际首选与读音一致时把切分放到 `Query.segmentations[0]`；已有完整词的词级个人选择和上下文排序保留。神经模型启用时，`sentence/viterbi/` 把词路径传过后续词格，`sentence/diversity.rs` 按路径前缀逐层保留共同前缀后的分歧。不同输出文本竞争六条重排名额，同文本的束内词路径留在同一组，分别保留静态分、个人证据、选择加分与代价，按神经公式重算后才决定该文本的有效路径。跨切分合并按不同文本分配名额，并把已选文本的各条路径送入统一重排。旧整句入口与联合入口均先按完整路径池最高总分和 `neural_margin` 确定文本组资格，再分配重排名额。`SearchDiagnostics` 与 CLI 的 `path_trace` 示例可按需查看词格、静态/兜底/个人分数、前驱竞争和剪枝；`issue8_async_bench` example 用受控后台 scorer 量逐键开销。无神经模型时仍只输出静态路径的首选；静态 bigram 无法可靠表达较远的句内语义，见 [Issue #8 诊断](issue-8-joint-decoder.md)。
+
 模块：`composition`（缓冲区与光标；中文模式下 Shift+字母按小写进 `buffer` 参与匹配、大写记在 `shifted`，`typed_text` 还原后用于原样上屏）/ `parser` / `correction`（拼写纠错：整段一处编辑的候选纠正 + `typo` 音节级敲错变体表，后者进整句词图当带代价的边）/
 `candidate` / `ranking` / `shortcut` / `sentence` / `fuzzy` / `shuangpin`（双拼：七套方案键位表、键 → 全拼解码与消耗换算）/ `zhuyin`（大千注音：键 → 注音符号 → 拼音，`[general] zhuyin` 开关，声调只判音节完整不进查询）/ `emoji` /
 `english`（英文模式候选）/ `engine`（`query::EnglishTail`：句末英文词并入整句，`woxiangxuehaorust` → 我想学好rust，尾段也像拼音时按分数与拼音读法比）。
@@ -104,7 +106,7 @@ TSV 解析、查询与生成工具把 `lue` / `nue` 统一成 `lve` / `nve`。
 `model.safetensors` + `config.json` + `vocab.json`），给「前文 + 整句」按字累加 log 概率；前文的每层 K / V 缓存（`PrefixCache`），
 同一段前文只算一次，每个候选只算自己那几个字（64 字前文 × 8 条 28 ms，Metal）。features `accelerate` / `metal` 换后端，壳用 `metal`。
 
-Engine 侧在 `engine/rescoring/`：接了打分器就取 Viterbi 前 `RESCORE_PATHS` = 6 条路径按 `路径分 + λ·(神经分 − 静态二元分)` 重排（λ `NEURAL_WEIGHT` 0.5，
+Engine 侧在 `engine/rescoring/`：接了打分器就取多样化 Viterbi 路径中最多 `RESCORE_PATHS` = 6 条按 `路径分 + λ·(神经分 − 静态二元分)` 重排（λ `NEURAL_WEIGHT` 0.5，
 个人 n-gram / 用户加分 / 代价不动），分走「前文 + 文本 → 神经分」缓存 `NeuralCache`；同步打分器（`with_sentence_scorer`，CLI 评测）当场补分，
 异步的（`with_async_sentence_scorer`，后台线程 `RescoreWorker`）查询不等模型：缺分的记下来，壳停键后 `request_rescoring`、`poll_rescoring` 到了再 `query` 一次。
 前文优先用壳给的应用光标前文（`set_rescoring_context`），没有用本会话最近 64 个上屏字符。CLI `--neural <导出目录>`（`--neural-weight` / `--neural-context` / `--neural-async`）。

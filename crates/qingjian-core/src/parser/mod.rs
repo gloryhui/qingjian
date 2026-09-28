@@ -75,7 +75,15 @@ pub fn segment(input: &str) -> Result<Vec<Segmentation>, ParseError> {
     }];
     for (index, chunk) in chunks.iter().enumerate() {
         let is_last = index + 1 == chunks.len();
-        let options = segment_chunk(chunk, is_last);
+        // 用户用单引号逐音节明确分隔时，完整合法的段就是那个音节；
+        // 较长的段仍可在内部切分（`woxiang'qu`），缩写段仍按原逻辑处理。
+        let options = if input.contains('\'') && is_syllable(chunk) {
+            vec![Segmentation {
+                syllables: vec![Syllable::complete(chunk)],
+            }]
+        } else {
+            segment_chunk(chunk, is_last)
+        };
         if options.is_empty() {
             return Err(ParseError::NoSegmentation);
         }
@@ -194,8 +202,8 @@ mod tests {
     #[test]
     fn apostrophe_forces_boundary() {
         let all = joined("xi'an");
-        assert_eq!(all[0], "xi an");
-        assert!(!all.iter().any(|s| s.starts_with("xian")));
+        assert_eq!(all, ["xi an"]);
+        assert_eq!(joined("ke'neng"), ["ke neng"]);
     }
 
     #[test]
