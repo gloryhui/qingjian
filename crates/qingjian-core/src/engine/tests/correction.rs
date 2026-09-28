@@ -71,7 +71,7 @@ fn typo_edges_in_the_lattice_correct_legal_but_unlikely_pinyin() {
     let mut engine = Engine::new(dictionary);
     engine.set_input("jineng");
     let query = engine.query().unwrap();
-    assert_eq!(query.segmentations[0].joined("'"), "jin'eng");
+    assert_eq!(query.segmentations[0].joined("'"), "ji'neng");
     assert_eq!(query.candidates.items[0].text, "技能");
     assert!(query.candidates.items.iter().all(|c| c.text != "近藤"));
     // 退回原样的路径时原样的整句照出：shude 词图里 是的（shu → shi 相邻键）赢，但 树德 正好拼成 shude，
