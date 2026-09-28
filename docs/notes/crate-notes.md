@@ -153,6 +153,8 @@ Engine 侧在 `engine/rescoring/`：接了打分器就取 Viterbi 前 `RESCORE_P
 （过渡期退路，偏好设置「候选窗口」页可选）；`[general] font` 是候选窗字族名（空为系统字体，`bitmap/font_files.rs` 用 CoreText 按字族名找文件只加载那几个，没装就回系统字体；
 设置页 `preferences/font_picker/` 是搜索框 + 列表）。设计与验收见 `docs/design/rendering.md`。
 
+macOS 候选面板默认在 `kCGPopUpMenuWindowLevel`（101）；Snipaste（`com.Snipaste`）截图标注时临时升到 103，高于截图覆盖层 102，其他应用仍用默认层级。换 Space 重建面板时保留当前层级。
+
 ## crates/qingjian-update
 
 检查更新（设计见 `docs/design/update.md`）：`index/` 是索引的类型、下载（`fetch.rs`，复用 workspace 的 reqwest + 单线程 tokio，20 秒超时、2 MB 上限）与验签

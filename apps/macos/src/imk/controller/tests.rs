@@ -3,7 +3,15 @@
 use objc2::{ClassType, sel};
 use objc2_app_kit::NSEventMask;
 
-use super::{INPUT_EVENTS, QingjianInputController};
+use super::{INPUT_EVENTS, QingjianInputController, ascii_parenthesis};
+
+#[test]
+fn english_parentheses_are_normalized_to_ascii() {
+    for (input, expected) in [("(", "("), ("（", "("), (")", ")"), ("）", ")")] {
+        assert_eq!(ascii_parenthesis(input), Some(expected), "{input}");
+    }
+    assert_eq!(ascii_parenthesis("["), None);
+}
 
 #[test]
 fn controller_declares_its_own_recognized_events() {

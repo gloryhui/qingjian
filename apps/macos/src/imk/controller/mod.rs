@@ -200,6 +200,15 @@ fn digit_key(key_code: u16) -> Option<usize> {
     })
 }
 
+/// 输入事件中的半角或全角圆括号，都统一映射成英文模式使用的 ASCII 括号。
+fn ascii_parenthesis(text: &str) -> Option<&'static str> {
+    match text {
+        "(" | "（" => Some("("),
+        ")" | "）" => Some(")"),
+        _ => None,
+    }
+}
+
 impl QingjianInputController {
     /// 登录 / 锁屏窗口：输入源菜单里没有青简，loginwindow 却照样激活它，按键一律交还系统。
     ///
@@ -264,6 +273,9 @@ impl QingjianInputController {
         let hotkey = !passthrough && self.translate_hotkey(event, pressed);
         match Route::decide(passthrough, reviewing, hotkey) {
             Route::Passthrough => {
+                if self.insert_english_parenthesis(event, pressed, client) {
+                    return true;
+                }
                 // 直通的字符记进历史与输入日志，切回中文时上下文才接得上；快捷键不记
                 if let Some(c) = self.passthrough_char(event, pressed) {
                     host::with(|h| h.engine.note_passthrough(c));
@@ -274,6 +286,10 @@ impl QingjianInputController {
             Route::Review => return self.handle_translation_review(key, client),
             Route::Translate => return self.translate_selection(client),
             Route::Continue => {}
+        }
+        // 放在修饰键 + 数字快捷键之前：英文候选组句里 Shift+9/0 应该输入括号，而不是删候选。
+        if self.insert_english_parenthesis(event, pressed, client) {
+            return true;
         }
         // 修饰键 + 数字：按配置的两组组合上屏第一 / 第二个译词（缺省 ⌥ 与 ⇧⌥）、删候选（缺省 ⇧）。
         // 只在组句中认：不在组句时 ⇧4 就是 `$`，得走下面的标点转换（中文模式出 ￥、⇧6 出 ……、⇧1 出 ！），
@@ -330,6 +346,38 @@ impl QingjianInputController {
             Some(text) if !text.is_empty() => self.handle_text(&text.to_string(), client, pressed),
             _ => false,
         }
+    }
+
+    /// 英文模式下消费括号键并显式插入 ASCII，候选组句按问字 / 英文词的既有规则收尾。
+    fn insert_english_parenthesis(
+        &self,
+        event: &NSEvent,
+        pressed: Modifiers,
+        client: TextClient<'_>,
+    ) -> bool {
+        if pressed.command
+            || pressed.control
+            || pressed.option
+            || !host::with(|h| h.mode.english()).unwrap_or(false)
+        {
+            return false;
+        }
+        let text = event.characters().map(|text| text.to_string());
+        let Some(ascii) = text.as_deref().and_then(ascii_parenthesis) else {
+            return false;
+        };
+        if host::with(|h| !h.engine.composition().is_empty()).unwrap_or(false) {
+            if host::with(|h| h.engine.question_mode()).unwrap_or(false) {
+                self.commit_highlighted(client);
+            } else {
+                self.commit_raw(client);
+            }
+        }
+        if let Some(c) = ascii.chars().next() {
+            host::with(|h| h.engine.note_passthrough(c));
+        }
+        client.insert_text(ascii);
+        true
     }
 
     /// 这一键是不是翻译选中文字的快捷键（配置 `[shortcut] translate_selection`，缺省 `⌃⌥T`）。

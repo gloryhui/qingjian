@@ -10,6 +10,11 @@ fn shifted_uppercase(c: char, modifiers: Modifiers) -> bool {
     c.is_ascii_uppercase() && modifiers.shift
 }
 
+/// 英文模式下的 ASCII 标点始终按半角交给应用，即使本次按键绕到通用文本处理的末尾。
+fn english_punctuation_is_passthrough(english: bool, c: char) -> bool {
+    english && c.is_ascii_punctuation()
+}
+
 impl QingjianInputController {
     /// `modifiers` 是这一次按键按着的修饰键：只有真正按着 Shift 的大写才走 `shift_letter` 那条策略。
     pub(super) fn handle_text(
@@ -211,8 +216,14 @@ impl QingjianInputController {
                 }
             }
         }
-        // 中文模式下的全角标点；转不了的（数字、字母以外的其他键）原样交给应用
-        match host::with(|h| h.engine.punctuate(c)).flatten() {
+        // 英文模式任何路径都不能误入中文全角转换（例如英文候选组句结束时的括号）。
+        // 中文模式下照常转全角；其他字符原样交给应用。
+        let punctuated = if english_punctuation_is_passthrough(english, c) {
+            None
+        } else {
+            host::with(|h| h.engine.punctuate(c)).flatten()
+        };
+        match punctuated {
             Some(full_width) => {
                 client.insert_text(full_width);
                 true
@@ -258,5 +269,15 @@ mod tests {
             shifted_uppercase('C', modifiers(true)),
             "⇧ + C 才是 Shift 输入"
         );
+    }
+
+    /// 英文模式的括号等 ASCII 标点不能走中文全角转换；中文模式仍保留原有转换路径。
+    #[test]
+    fn english_punctuation_stays_ascii() {
+        for c in ['(', ')', '[', ']', ',', '.', '?', '!'] {
+            assert!(english_punctuation_is_passthrough(true, c), "{c}");
+            assert!(!english_punctuation_is_passthrough(false, c), "{c}");
+        }
+        assert!(!english_punctuation_is_passthrough(true, 'a'));
     }
 }

@@ -17,6 +17,10 @@ use super::view::CandidateView;
 /// `kCGPopUpMenuWindowLevel`：浮在普通窗口和浮动面板之上，与系统输入法候选框同级。
 const POPUP_MENU_LEVEL: NSWindowLevel = 101;
 
+/// Snipaste 的截图选区覆盖层在 `kCGOverlayWindowLevel`（102）；候选面板需高一层才能显示在标注框上方。
+const SNIPASTE_CANDIDATE_LEVEL: NSWindowLevel = 103;
+const SNIPASTE_BUNDLE_ID: &str = "com.Snipaste";
+
 /// 候选窗口与光标行之间的间隙。
 const CARET_GAP: f64 = 4.0;
 
@@ -33,6 +37,9 @@ pub struct CandidateWindow {
     /// 当前外观（跟随系统时为 `None`）；换面板时要重设。
     appearance: Option<Retained<NSAppearance>>,
 
+    /// 当前面板层级；换 Space 重建面板时需保留。
+    panel_level: NSWindowLevel,
+
     /// 用来取屏幕尺寸。
     mtm: MainThreadMarker,
 }
@@ -40,17 +47,24 @@ pub struct CandidateWindow {
 impl CandidateWindow {
     pub fn new(mtm: MainThreadMarker) -> Self {
         let view = CandidateView::new(mtm, Theme::system_default());
-        let panel = build_panel(mtm, &view);
+        let panel = build_panel(mtm, &view, POPUP_MENU_LEVEL);
         Self {
             panel,
             view,
             appearance: None,
+            panel_level: POPUP_MENU_LEVEL,
             mtm,
         }
     }
 
     /// 显示一帧。`anchor` 是光标行的屏幕矩形，窗口贴在它下方，放不下就放上方。
-    pub fn show(&mut self, frame: Frame, anchor: NSRect) {
+    pub fn show(&mut self, frame: Frame, anchor: NSRect, application: Option<&str>) {
+        self.panel_level = if application == Some(SNIPASTE_BUNDLE_ID) {
+            SNIPASTE_CANDIDATE_LEVEL
+        } else {
+            POPUP_MENU_LEVEL
+        };
+        self.panel.setLevel(self.panel_level);
         if frame.is_empty() {
             self.hide();
             return;
@@ -88,7 +102,7 @@ impl CandidateWindow {
         }
         let frame = self.panel.frame();
         self.panel.orderOut(None);
-        let panel = build_panel(self.mtm, &self.view);
+        let panel = build_panel(self.mtm, &self.view, self.panel_level);
         panel.setAppearance(self.appearance.as_deref());
         panel.setFrame_display(frame, true);
         panel.orderFrontRegardless();
@@ -171,7 +185,11 @@ impl CandidateWindow {
 }
 
 /// 建一块面板并把内容视图装进去：无边框、不抢焦点、透明背景带阴影、不吃鼠标。
-fn build_panel(mtm: MainThreadMarker, view: &CandidateView) -> Retained<NSPanel> {
+fn build_panel(
+    mtm: MainThreadMarker,
+    view: &CandidateView,
+    level: NSWindowLevel,
+) -> Retained<NSPanel> {
     let panel = NSPanel::initWithContentRect_styleMask_backing_defer(
         mtm.alloc::<NSPanel>(),
         NSRect::new(NSPoint::ZERO, NSSize::new(200.0, 100.0)),
@@ -189,7 +207,7 @@ fn build_panel(mtm: MainThreadMarker, view: &CandidateView) -> Retained<NSPanel>
     panel.setCollectionBehavior(collection_behavior());
     // 不要 setFloatingPanel(true)：它会把层级改回 NSFloatingWindowLevel（3），全屏应用的 Space 里就看不见了；
     // 层级最后设，别被前面任何一项覆盖
-    panel.setLevel(POPUP_MENU_LEVEL);
+    panel.setLevel(level);
     panel.setContentView(Some(view));
     panel
 }

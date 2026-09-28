@@ -146,6 +146,7 @@ impl Host {
             sentence: self.sentence.clone(),
             status: self.status.clone(),
         };
-        self.window.show(frame, self.anchor);
+        self.window
+            .show(frame, self.anchor, self.engine.application());
     }
 }
