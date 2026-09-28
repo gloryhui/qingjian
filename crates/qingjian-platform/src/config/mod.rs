@@ -151,14 +151,13 @@ english_candidates_off = [
     };
 }
 
-/// 模板 `[general]` 里的英文候选开关（macOS）：首次运行就写**关**，英文模式是纯直通，与系统 ABC 键盘一致。
-/// 这里与 [`crate::config::GeneralConfig::default`]（开）不同是有意的：老配置没写这一项时仍按缺省走，
-/// 行为不变。测试 `template_parses_to_defaults` 会核对这一处差异。
+/// macOS 保留旧模板值以兼容历史配置；Shift「英」始终纯直通，与此字段无关。
+/// 测试 `template_parses_to_defaults` 核对与 [`crate::config::GeneralConfig::default`] 的差异。
 #[cfg(target_os = "macos")]
 macro_rules! template_english_candidates {
     () => {
-        r#"# 英文模式（单击 Shift 切过去）是否给英文候选（补全与拼错纠正）：开着才组英文句、用 Tab 或方向键选词。
-# 缺省关 = 纯直通：英文模式里敲的字母、数字、标点、空格、回车、Tab 全部直接交给应用，与系统 ABC 键盘一样
+        r#"# 历史英文候选设置，仅保留配置兼容；macOS 切到「英」后始终由系统与应用处理全部按键
+# 修改本项不会启用英文候选；中文模式仍可识别与补全英文词
 english_candidates = false
 "#
     };
@@ -554,16 +553,12 @@ impl Config {
         Ok(true)
     }
 
-    /// macOS 的一次性迁移：把老配置里的英文模式改成纯直通。
+    /// 保留 macOS 历史英文配置的一次性迁移：`true` 或未写时改为 `false`。
+    /// 当前 Shift「英」的直通路由与此值无关，迁移只维持旧配置与印记的兼容。
     ///
-    /// 纯直通（英文模式整个把按键交给应用，与系统 ABC 键盘一样）是 macOS 的新缺省体验，而老配置写着
-    /// `english_candidates = true`——只改模板救不了已经装好的机器，它们升级后仍旧组英文句。所以第一次启动
-    /// 检查一次：值为 `true` 或者干脆没写的，原地改成 `false`（注释与顺序照 [`Self::set_value`] 保留）。
-    ///
-    /// 印记文件（[`PURE_ENGLISH_STAMP`]）记的是「这次检查做完了」，**不是**「真的改了东西」：本来就 `false`
-    /// 的（新装读到的模板）也要落印记，否则用户之后自己勾上「英文模式也给候选」，下一次启动又会被当成
-    /// 老配置改回去。落盘顺序因此是硬约束：读得动 → 需要改时先改配置成功 → 最后才写印记，中间任一步失败
-    /// 都不留印记，下一次启动还能重试。返回是否真的改了配置文件。
+    /// 印记文件（[`PURE_ENGLISH_STAMP`]）记录「这次检查做完了」，本来就 `false` 也落印记。
+    /// 落盘顺序是硬约束：读得动 → 需要改时先改配置成功 → 最后才写印记；失败时不留印记，下次重试。
+    /// 返回是否真的改了配置文件，注释与顺序照 [`Self::set_value`] 保留。
     pub fn migrate_macos_pure_english(path: &Path) -> Result<bool, ConfigError> {
         let stamp = path.with_file_name(PURE_ENGLISH_STAMP);
         if !path.is_file() || stamp.exists() {

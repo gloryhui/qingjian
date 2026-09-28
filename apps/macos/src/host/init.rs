@@ -1,6 +1,28 @@
 //! 启动：加载词库 / 语言模型 / 释义表 / 学习数据，建 Engine 与候选窗口，装进线程局部的 HOST。
 
-use super::*;
+use super::cloud::{CloudTestMonitor, PredictMonitor};
+use super::config::ConfigWatch;
+use super::dictionaries::DictionaryInfo;
+use super::mode::ModeState;
+use super::model::RescoreMonitor;
+use super::session::Session;
+use super::{GLOSSARY_LANGUAGES, HOST, Host, UPDATE_STATE_FILE, USAGE_FILE, VOCABULARY_FILE, with};
+use crate::app::{BundleInfo, Settings, paths};
+use crate::candidates::CandidateWindow;
+use crate::error::HostError;
+use crate::menubar::{InputMenu, ModeIndicator};
+use crate::preferences::{PreferencesWindow, UpdateStatus};
+use objc2::MainThreadMarker;
+use objc2_foundation::NSRect;
+use qingjian_core::{EmojiTable, Engine, Language};
+use qingjian_dictionary::{Dictionary, WordList};
+use qingjian_learning::{FrequencyLearner, UsageStats, VocabularyBook};
+use qingjian_lm::BigramModel;
+use qingjian_platform::extra_dictionaries;
+use qingjian_platform::{DictionariesConfig, KeyCombo, LayoutMode, PreeditMode, ShortcutConfig};
+use qingjian_predict::PredictConfig;
+use qingjian_translate::{Glossary, LayeredTranslator, LevelTable, PersonalGlossary};
+use std::path::PathBuf;
 
 /// 加载数据并建立单例。必须在主线程、在 IMKServer 建立之前调用。版本显示在菜单末行与「关于」页。
 pub fn init(mtm: MainThreadMarker, info: &BundleInfo) -> Result<(), HostError> {
@@ -152,9 +174,7 @@ pub fn init(mtm: MainThreadMarker, info: &BundleInfo) -> Result<(), HostError> {
             layout: LayoutMode::default(),
             horizontal_grid: false,
             mode: ModeState::default(),
-            english_candidates: false,
             text_replacements: Vec::new(),
-            apps: AppsConfig::default(),
             monitor,
             cloud_test: None,
             cloud_test_monitor: CloudTestMonitor::new(mtm),
