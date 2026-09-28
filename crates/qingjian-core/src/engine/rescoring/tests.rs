@@ -26,6 +26,7 @@ fn path(text: &str, score: f64) -> Conversion {
         }],
         score,
         static_score: score,
+        personal_bonus: 0.0,
         penalty: 0.0,
     }
 }
@@ -42,11 +43,20 @@ fn texts(paths: &[Conversion]) -> Vec<&str> {
 fn sync_scorer_reorders_paths_in_place() {
     let engine = engine().with_sentence_scorer(Box::new(Prefers("开放")), Some(0.5), None, None);
     let mut paths = vec![path("开饭", -10.0), path("开放", -11.0)];
+    paths[0].personal_bonus = 2.5;
     engine.rescore_paths(&mut paths);
     assert_eq!(texts(&paths), ["开放", "开饭"]);
     // λ 0.5：开饭 −10 + 0.5·(−20 + 10) = −15；开放 −11 + 0.5·(−1 + 11) = −6
     assert!((paths[0].score - -6.0).abs() < 1e-9);
     assert!((paths[1].score - -15.0).abs() < 1e-9);
+    assert_eq!(
+        paths
+            .iter()
+            .find(|path| path.text == "开饭")
+            .unwrap()
+            .personal_bonus,
+        2.5
+    );
     assert!(!engine.rescoring_pending());
 }
 

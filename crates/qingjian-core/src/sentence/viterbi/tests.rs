@@ -226,7 +226,7 @@ fn personal_ngram_overrides_static_model_after_two_selections() {
     let dictionary = Dictionary::parse(SAMPLE).unwrap();
     let patterns = complete(&["wo", "xiang"]);
     let mut personal = UserNgram::default();
-    let text = |personal: &UserNgram| {
+    let conversion_for = |personal: &UserNgram| {
         convert(
             &[&dictionary],
             &patterns,
@@ -237,17 +237,35 @@ fn personal_ngram_overrides_static_model_after_two_selections() {
             &mut SpanCache::default(),
         )
         .unwrap()
-        .text
     };
-    assert_eq!(text(&personal), "我翔");
+    assert_eq!(conversion_for(&personal).text, "我翔");
     // 静态模型给 翔 的是很强的 bigram（P ≈ 0.14）：用户选过一次 我 → 想 翻不过（防误选），两次就翻。
     // 静态证据越弱（P 越小），个人偏好翻过来得越早。
     personal.record(Context::START, "我");
     personal.record(Context::after("我"), "想");
-    assert_eq!(text(&personal), "我翔");
+    assert_eq!(conversion_for(&personal).text, "我翔");
     personal.record(Context::START, "我");
     personal.record(Context::after("我"), "想");
-    assert_eq!(text(&personal), "我想");
+    let learned = conversion_for(&personal);
+    assert_eq!(learned.text, "我想");
+    assert!(learned.personal_bonus > 0.0);
+}
+
+#[test]
+fn conversion_records_user_choice_bonus_before_neural_rescoring() {
+    let dictionary = Dictionary::parse(SAMPLE).unwrap();
+    let conversion = convert(
+        &[&dictionary],
+        &complete(&["wo", "xiang"]),
+        &NoLanguageModel,
+        Personal::NONE,
+        |text| if text == "我想" { 3 } else { 0 },
+        |_, _| 0.0,
+        &mut SpanCache::default(),
+    )
+    .unwrap();
+    assert_eq!(conversion.text, "我想");
+    assert!(conversion.personal_bonus > 0.0);
 }
 
 /// 三元上下文来自前驱的回指：「我想」后面的 去 / 区 由用户在「我想」后选过什么决定，

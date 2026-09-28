@@ -8,6 +8,46 @@ fn exact_word_first_then_longer_then_prefix_expansions_then_prefix_words() {
 }
 
 #[test]
+fn complete_word_beats_an_unlearned_static_combination() {
+    let dictionary = Dictionary::parse(
+        "蛋糕\tdan gao\t13914\n当\tdang\t900000\n奥\tao\t300000\n石锅\tshi guo\t304\n试过\tshi guo\t4814\n是\tshi\t929226\n过\tguo\t300000\n",
+    )
+    .unwrap();
+    let mut engine = Engine::new(dictionary);
+    for (input, expected) in [("dangao", "蛋糕"), ("shiguo", "试过")] {
+        engine.set_input(input);
+        let query = engine.query().unwrap();
+        assert_eq!(query.candidates.items[0].text, expected);
+        assert_eq!(query.candidates.items[0].kind, CandidateKind::Chinese);
+    }
+}
+
+#[test]
+fn learned_combination_can_still_beat_a_complete_word() {
+    let dictionary =
+        Dictionary::parse("合并\the bing\t16459\n和\the\t800000\n并\tbing\t300000\n").unwrap();
+    let mut learner = WordLearner::default();
+    learner
+        .ngram
+        .record_times(sentence::Context::START, "和", 14);
+    learner
+        .ngram
+        .record_times(sentence::Context::after("和"), "并", 15);
+    let mut engine = Engine::new(dictionary).with_learner(Box::new(learner));
+    engine.set_input("hebing");
+    let query = engine.query().unwrap();
+    assert_eq!(query.candidates.items[0].text, "和并");
+    assert_eq!(query.candidates.items[0].kind, CandidateKind::Sentence);
+    assert!(
+        query
+            .candidates
+            .items
+            .iter()
+            .any(|candidate| candidate.text == "合并")
+    );
+}
+
+#[test]
 fn partial_last_syllable_expands() {
     assert_eq!(texts("kaif"), ["开放", "开发", "开饭", "开发者", "开"]);
 }

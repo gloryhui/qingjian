@@ -446,6 +446,8 @@ fn convert_path_groups_inner(
 fn backtrack(nodes: &[Vec<Node>], mut position: usize, mut index: usize) -> Conversion {
     let score = nodes[position][index].score;
     let static_score = nodes[position][index].static_score;
+    let personal_bonus =
+        nodes[position][index].personal_delta + nodes[position][index].selection_bonus;
     let penalty = nodes[position][index].penalty;
     let mut words: Vec<SentenceWord> = Vec::new();
     while position > 0 {
@@ -471,6 +473,7 @@ fn backtrack(nodes: &[Vec<Node>], mut position: usize, mut index: usize) -> Conv
         words,
         score,
         static_score,
+        personal_bonus,
         penalty,
     }
 }

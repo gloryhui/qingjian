@@ -586,6 +586,10 @@ impl Engine {
                 conversion = self.convert_sentence(&best.patterns(), false)?;
             }
         }
+        let typed = best.joined("");
+        if self.should_prefer_complete_word(items, &conversion, &typed) {
+            return None;
+        }
         if conversion.has_placeholder() {
             return None;
         }
@@ -614,6 +618,28 @@ impl Engine {
             reading: None,
             translation: None,
             aux_code: None,
+        })
+    }
+
+    /// 没有个人学习加分时，拼字整句不越过覆盖整段读音的完整词；神经分不算个人学习证据。
+    pub(super) fn should_prefer_complete_word(
+        &self,
+        items: &[Candidate],
+        conversion: &Conversion,
+        typed: &str,
+    ) -> bool {
+        if conversion.word_count() < 2 || conversion.altered() || conversion.personal_bonus > 1e-6 {
+            return false;
+        }
+        if items.iter().any(|candidate| {
+            candidate.kind == CandidateKind::Chinese
+                && candidate.text == conversion.text
+                && candidate.syllables != conversion.syllables
+        }) {
+            return false;
+        }
+        items.iter().any(|candidate| {
+            candidate.kind == CandidateKind::Chinese && candidate.syllables.concat() == typed
         })
     }
 
