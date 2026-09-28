@@ -224,6 +224,23 @@ fn english_completions_appear_when_pinyin_is_unlikely() {
 }
 
 #[test]
+fn english_completions_follow_chinese_but_exact_words_keep_priority() {
+    let dictionary = Dictionary::parse("我的\two de\t500000\n我\two\t100000\n").unwrap();
+    let words = WordList::parse("Wodehouse\twodehouse\t50\nwodge\twodge\t60\n").unwrap();
+    let mut engine = Engine::new(dictionary).with_english(words);
+
+    engine.set_input("wod");
+    let items = engine.query().unwrap().candidates.items;
+    assert_eq!(items[0].text, "我的");
+    assert!(items.iter().any(|c| c.text == "Wodehouse"));
+
+    engine.set_input("wodge");
+    let items = engine.query().unwrap().candidates.items;
+    assert_eq!(items[0].text, "wodge");
+    assert_eq!(items[0].kind, CandidateKind::English);
+}
+
+#[test]
 fn english_mode_suggests_from_the_word_list_and_keeps_the_typed_text() {
     let words = WordList::parse(
         "company\tcompany\t900\ncompare\tcompare\t500\nhello\thello\t1000\nhelp\thelp\t700\n",
