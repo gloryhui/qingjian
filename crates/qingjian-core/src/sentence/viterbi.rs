@@ -278,6 +278,7 @@ fn backtrack(nodes: &[Vec<Node>], mut position: usize, mut index: usize) -> Conv
         words,
         score,
         static_score,
+        personal_bonus: score - static_score + penalty,
         penalty,
     }
 }

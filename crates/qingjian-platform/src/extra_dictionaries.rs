@@ -50,7 +50,11 @@ pub fn load(
     user_dir: Option<&Path>,
     config: &DictionariesConfig,
 ) -> Vec<Dictionary> {
-    let mut loaded = Vec::new();
+    // fork 的少量默认词随程序编入，下载上游产品数据包时也能照常出词。
+    let mut loaded = vec![
+        Dictionary::parse(include_str!("../../../assets/lexicon/fork_words.tsv"))
+            .expect("fork words must be a valid dictionary"),
+    ];
     if let Some(dir) = bundled_dir {
         for (stem, path) in list(dir) {
             if !config.is_domain_enabled(&stem) {
@@ -94,6 +98,35 @@ fn open(stem: &str, path: &Path) -> Option<Dictionary> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use qingjian_core::Engine;
+    use qingjian_dictionary::SyllablePattern;
+
+    #[test]
+    fn fork_word_is_available_without_a_product_data_bundle() {
+        let dictionaries = load(None, None, &DictionariesConfig::default());
+        let word = &dictionaries[0];
+        let patterns = [
+            vec![SyllablePattern::complete("de")],
+            vec![SyllablePattern::complete("yuan")],
+            vec![SyllablePattern::complete("sheng")],
+        ];
+        assert!(
+            word.lookup_exact_alt(&patterns)
+                .iter()
+                .any(|hit| hit.text == "德元升")
+        );
+
+        let base = Dictionary::parse("德元\tde yuan\t72\n原生\tyuan sheng\t1156\n").unwrap();
+        let mut engine = Engine::new(base);
+        engine.set_extra_dictionaries(dictionaries);
+        engine.set_input("deyuansheng");
+        assert_eq!(engine.query().unwrap().candidates.items[0].text, "德元升");
+
+        for (input, expected) in [("daimashenji", "代码审计"), ("henganrao", "很干扰")] {
+            engine.set_input(input);
+            assert_eq!(engine.query().unwrap().candidates.items[0].text, expected);
+        }
+    }
 
     #[test]
     fn list_prefers_packed_over_tsv_with_same_stem() {

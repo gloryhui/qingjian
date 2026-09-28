@@ -19,6 +19,9 @@ pub struct Conversion {
     /// 用户加分与代价。神经重打分用它：神经分替换的是静态模型的判断，个人的那些原样保留。
     pub static_score: f64,
 
+    /// 静态路径之外的个人学习加分；神经模型重排只改 `score`，不改这一项。
+    pub personal_bonus: f64,
+
     /// 路径上模糊音 / 敲错变体的代价之和（已含在 `score` 里）：大于 0 说明这条路径不是按敲的原样读的。
     pub penalty: f64,
 }

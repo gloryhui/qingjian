@@ -26,6 +26,7 @@ fn path(text: &str, score: f64) -> Conversion {
         }],
         score,
         static_score: score,
+        personal_bonus: 0.0,
         penalty: 0.0,
     }
 }
@@ -47,6 +48,7 @@ fn sync_scorer_reorders_paths_in_place() {
     // λ 0.5：开饭 −10 + 0.5·(−20 + 10) = −15；开放 −11 + 0.5·(−1 + 11) = −6
     assert!((paths[0].score - -6.0).abs() < 1e-9);
     assert!((paths[1].score - -15.0).abs() < 1e-9);
+    assert!(paths.iter().all(|path| path.personal_bonus == 0.0));
     assert!(!engine.rescoring_pending());
 }
 

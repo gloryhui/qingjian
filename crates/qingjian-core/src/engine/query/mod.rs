@@ -576,6 +576,17 @@ impl Engine {
                 conversion = self.convert_sentence(&best.patterns(), false)?;
             }
         }
+        // 整段读音已有词库词时，无个人学习加持的静态拼字组合不抢它的首位。
+        // 神经重排会改路径总分，所以这里只看转换时留下的个人加分。
+        if !conversion.altered() && conversion.personal_bonus <= 1e-6 {
+            let letters = best.joined("");
+            let covered = items
+                .iter()
+                .any(|c| c.kind == CandidateKind::Chinese && c.syllables.concat() == letters);
+            if covered && items.iter().all(|c| c.text != conversion.text) {
+                return None;
+            }
+        }
         if conversion.has_placeholder() {
             return None;
         }
