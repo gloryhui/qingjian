@@ -45,7 +45,8 @@ fn other() -> ModifierEvent {
 /// 裸按一次左 Shift（按下再抬起），返回这次单击有没有翻模式。
 fn tap_shift(mode: &mut ModeState) -> bool {
     mode.modifier_event(down(SwitchKey::Shift, 0, true));
-    mode.modifier_event(up(SwitchKey::Shift, 0))
+    let pending = mode.modifier_event(up(SwitchKey::Shift, 0));
+    pending && mode.confirm_pending()
 }
 
 /// 单击 Shift：中文 → 英文，再单击：英文 → 中文。
@@ -124,6 +125,7 @@ fn two_separate_shift_taps_each_toggle() {
     for slot in [0u8, 1] {
         mode.modifier_event(down(SwitchKey::Shift, slot, true));
         assert!(mode.modifier_event(up(SwitchKey::Shift, slot)), "{slot}");
+        assert!(mode.confirm_pending(), "{slot}");
     }
     assert!(!mode.english());
 }
@@ -160,6 +162,52 @@ fn a_fresh_tap_works_after_a_discarded_one() {
     assert!(!mode.modifier_event(up(SwitchKey::Shift, 0)));
     assert!(tap_shift(&mut mode));
     assert!(mode.english());
+}
+
+/// 富文本客户端可能先投递右 Shift 抬起，再投递仍带 Shift 的组合键 KeyDown。
+/// 字符完全由客户端提供；这里只按修饰标志作废待定单击。
+#[test]
+fn late_key_down_cancels_right_shift_chords_in_both_modes() {
+    for key in ["A", ".", ",", "'", ";"] {
+        for english in [false, true] {
+            let mut mode = mode();
+            if english {
+                assert!(tap_shift(&mut mode));
+            }
+            mode.modifier_event(down(SwitchKey::Shift, 1, true));
+            assert!(mode.modifier_event(up(SwitchKey::Shift, 1)), "{key}");
+            assert!(mode.has_pending());
+            assert!(!mode.key_down(true, false), "Shift+{key}");
+            assert!(!mode.has_pending());
+            assert!(!mode.confirm_pending());
+            assert_eq!(mode.english(), english, "Shift+{key}");
+            assert_eq!(mode.passthrough(), english);
+        }
+    }
+}
+
+#[test]
+fn bare_tap_is_confirmed_before_next_unmodified_key() {
+    let mut mode = mode();
+    mode.modifier_event(down(SwitchKey::Shift, 1, true));
+    assert!(mode.modifier_event(up(SwitchKey::Shift, 1)));
+    assert!(!mode.english());
+    assert!(mode.key_down(false, false));
+    assert!(mode.english());
+    assert!(!mode.confirm_pending());
+}
+
+#[test]
+fn settings_and_deactivation_cancel_a_delayed_tap() {
+    let mut mode = mode();
+    mode.modifier_event(down(SwitchKey::Shift, 1, true));
+    assert!(mode.modifier_event(up(SwitchKey::Shift, 1)));
+    mode.set_settings(shift(), true);
+    assert!(!mode.confirm_pending());
+    mode.modifier_event(down(SwitchKey::Shift, 1, true));
+    assert!(mode.modifier_event(up(SwitchKey::Shift, 1)));
+    mode.cancel_pending();
+    assert!(!mode.confirm_pending());
 }
 
 /// 没勾 Shift 时按它不切换（`[shortcut] switch_mode = []`）。

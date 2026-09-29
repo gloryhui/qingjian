@@ -174,6 +174,7 @@ pub fn init(mtm: MainThreadMarker, info: &BundleInfo) -> Result<(), HostError> {
             layout: LayoutMode::default(),
             horizontal_grid: false,
             mode: ModeState::default(),
+            pending_switch: None,
             text_replacements: Vec::new(),
             monitor,
             cloud_test: None,

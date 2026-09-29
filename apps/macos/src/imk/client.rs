@@ -22,6 +22,10 @@ impl<'a> TextClient<'a> {
         Self { object }
     }
 
+    pub fn object(&self) -> &'a AnyObject {
+        self.object
+    }
+
     /// 设置 marked text（带下划线的未上屏文本），光标放在第 `cursor` 个字符处。空串等于清除。
     pub fn set_marked_text(&self, text: &str, cursor: usize) {
         let string = NSString::from_str(text);
