@@ -1,4 +1,4 @@
-//! 「候选窗口」页：外观、排布、渲染引擎、字体（可搜索的列表）、拼音显示位置。
+//! 「候选窗口」页：外观、排布、Emoji 候选、渲染引擎、字体与拼音显示位置。
 
 use objc2::MainThreadMarker;
 use objc2::rc::Retained;
@@ -21,6 +21,9 @@ pub struct CandidatesPage {
 
     /// 横排时上 / 下键展开成多行矩阵。
     horizontal_grid: Retained<NSButton>,
+
+    /// 普通候选中是否显示 Emoji。
+    emoji_candidates: Retained<NSButton>,
 
     /// 青简渲染器 / 系统绘制。
     renderer: Retained<NSPopUpButton>,
@@ -57,6 +60,9 @@ impl CandidatesPage {
             mtm,
             "勾上后横排下 ↑ / ↓ 把一行展开成 6 行矩阵并换行，← / → 在候选之间移动（拼音光标用 ⌥← / ⌥→），Esc 第一下先收回；不勾（缺省）按键与以前一样。",
         );
+        let emoji_candidates = checkbox(mtm, "表情候选", Setting::EmojiCandidates, target);
+        row_checkbox(layout, &emoji_candidates);
+        note(layout, mtm, "在候选中显示 Emoji（默认关闭）。");
         let renderer_titles: Vec<String> = CandidateRenderer::ALL
             .iter()
             .map(|r| r.label().to_owned())
@@ -97,6 +103,7 @@ impl CandidatesPage {
             theme,
             layout_mode,
             horizontal_grid,
+            emoji_candidates,
             renderer,
             font,
             preedit,
@@ -114,6 +121,7 @@ impl CandidatesPage {
             LayoutMode::ALL.iter().position(|l| *l == general.layout),
         );
         set_checked(&self.horizontal_grid, general.horizontal_grid);
+        set_checked(&self.emoji_candidates, general.emoji_candidates);
         self.horizontal_grid
             .setEnabled(general.layout == LayoutMode::Horizontal);
         select(

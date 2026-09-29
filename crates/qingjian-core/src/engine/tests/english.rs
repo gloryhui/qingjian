@@ -284,6 +284,7 @@ fn english_mode_suggests_from_the_word_list_and_keeps_the_typed_text() {
     // emoji 排在所有词后面，不挡上下键选词
     let table = EmojiTable::parse("help\t🆘\n").unwrap();
     let mut engine = engine.with_emoji(table);
+    engine.set_emoji_candidates(true);
     engine.set_english_mode(true);
     engine.set_input("helo");
     assert_eq!(texts_of(&engine), ["hello", "help", "🆘"]);

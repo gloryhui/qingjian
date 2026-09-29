@@ -2,11 +2,44 @@
 
 use super::*;
 
+fn has_emoji(engine: &Engine) -> bool {
+    engine
+        .query()
+        .unwrap()
+        .candidates
+        .items
+        .iter()
+        .any(|candidate| candidate.kind == CandidateKind::Emoji)
+}
+
+#[test]
+fn emoji_candidates_are_off_by_default_and_toggle_for_chinese_and_english() {
+    let words = WordList::parse("smile\n").unwrap();
+    let table = EmojiTable::parse("开发\t👨‍💻\nsmile\t😀\n").unwrap();
+    let mut engine = engine().with_english(words).with_emoji(table);
+
+    engine.set_input("kaifa");
+    assert!(!has_emoji(&engine));
+    engine.set_emoji_candidates(true);
+    assert!(has_emoji(&engine));
+    engine.set_emoji_candidates(false);
+    assert!(!has_emoji(&engine));
+
+    engine.set_english_mode(true);
+    engine.set_input("smile");
+    assert!(!has_emoji(&engine));
+    engine.set_emoji_candidates(true);
+    assert!(has_emoji(&engine));
+    engine.set_emoji_candidates(false);
+    assert!(!has_emoji(&engine));
+}
+
 #[test]
 fn english_words_bring_their_emoji_and_the_emoji_consumes_the_whole_input() {
     let words = WordList::parse("smile\nsmiled\n").unwrap();
     let table = EmojiTable::parse("smile\t😀 😄\n笑\t😄\n").unwrap();
     let mut engine = engine().with_english(words).with_emoji(table);
+    engine.set_emoji_candidates(true);
     engine.set_input("smile");
     let items = engine.query().unwrap().candidates.items;
     let position = items
@@ -25,6 +58,7 @@ fn english_words_bring_their_emoji_and_the_emoji_consumes_the_whole_input() {
 fn emoji_follow_their_word_and_consume_its_syllables() {
     let table = EmojiTable::parse("开发\t👨‍💻 🛠️ 🧑‍💻\n开\t🔓\n").unwrap();
     let mut engine = engine().with_emoji(table);
+    engine.set_emoji_candidates(true);
     engine.set_input("kaifazhe");
     let query = engine.query().unwrap();
     let items = &query.candidates.items;

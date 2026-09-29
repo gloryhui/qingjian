@@ -240,6 +240,8 @@ preedit = "both"
 "#,
     template_english_candidates!(),
     r#"
+# 普通中文与英文候选中是否显示对应的 Emoji；缺省关闭，打开后 Emoji 紧随对应词
+emoji_candidates = false
 # 繁体输出模式。开启后上屏繁体，不影响词库和个人词频的简体记录。
 traditional = false
 # 中文模式下整段输入是英文词时（hello / key）是否让中文候选排第一、英文词第二；缺省 false：拼音不像话的输入英文词排第一
@@ -635,6 +637,16 @@ mod tests {
         assert_eq!(config.predict.model, "deepseek-v4-flash");
         assert_eq!(config.predict.reasoning_effort, "none");
         assert_eq!(config.predict.api_key_env, "QINGJIAN_API_KEY");
+    }
+
+    #[test]
+    fn emoji_candidates_default_off_and_parse_explicit_on() {
+        assert!(!Config::default().general.emoji_candidates);
+        let old: Config = toml::from_str("[general]\npage_size = 5\n").unwrap();
+        assert!(!old.general.emoji_candidates);
+        let enabled: Config = toml::from_str("[general]\nemoji_candidates = true\n").unwrap();
+        assert!(enabled.general.emoji_candidates);
+        assert!(TEMPLATE.contains("emoji_candidates = false"));
     }
 
     #[test]
