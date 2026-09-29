@@ -43,7 +43,14 @@ impl QingjianInputController {
             }
         }
         let pending = host::with(|h| {
+            let had_pending = h.mode.has_pending();
             let pending = h.mode.modifier_event(modifier);
+            if had_pending
+                && !h.mode.has_pending()
+                && let Some(timer) = h.pending_switch.take()
+            {
+                timer.invalidate();
+            }
             // 键位的开合是自己记的（聚合标志分不清左右两只），记漏了就照聚合标志清掉：
             // 输入法可能在按住 Shift 的时候才被激活。必须在判定之后对账，否则抬起会被当成按下。
             h.mode.resync(

@@ -36,6 +36,10 @@ pub fn catch_panic<R>(what: &'static str, f: impl FnOnce() -> R) -> Option<R> {
 pub fn recover_from_panic(client: Option<TextClient<'_>>) {
     let recovered = catch_unwind(AssertUnwindSafe(|| {
         let pending = crate::host::with(|h| {
+            if let Some(timer) = h.pending_switch.take() {
+                timer.invalidate();
+            }
+            h.mode.cancel_pending();
             let text = h.engine.composition().text().to_owned();
             h.engine.clear();
             h.cancel_prediction();

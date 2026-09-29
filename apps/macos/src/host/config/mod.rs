@@ -41,6 +41,9 @@ impl Host {
         self.page_keys = config.general.page_keys();
         self.preedit_mode = config.general.preedit;
         // 中英模式：切换键与总开关来自配置，模式本身是输入法自己记的那一份
+        if let Some(timer) = self.pending_switch.take() {
+            timer.invalidate();
+        }
         self.mode
             .set_settings(config.shortcut.switch_mode, config.general.english_mode);
         self.window.set_theme(config.general.theme);
