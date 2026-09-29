@@ -4,8 +4,14 @@
 //! 输入法自己的一份状态，**不是硬件 Caps Lock 的开关位置**。Caps Lock 只管大小写——亮着时字母以大写
 //! 送来，青简按普通键盘的样子把它交给应用，既不改中英模式，也不另起一套行为。
 
+use std::cell::Cell;
+use std::time::{Duration, Instant};
+
 use qingjian_platform::key_tap::{KeyTap, ModifierEvent};
 use qingjian_platform::{SwitchKey, SwitchKeys};
+
+/// 只有按下到抬起不超过这个时长，才算一次「单击」；与抬起后的乱序保护时间无关。
+const SWITCH_TAP_MAX_DURATION: Duration = Duration::from_millis(500);
 
 /// 中英模式状态：配置（`[general] english_mode`、`[shortcut] switch_mode`）套进来后才可能切到英文。
 #[derive(Default)]
@@ -15,6 +21,9 @@ pub struct ModeState {
 
     /// 正按着哪些物理键位、哪一次按下还没被别的键打断（见 [`KeyTap`]）。
     tap: KeyTap,
+
+    /// 当前尚未被组合键打断的那次按下时间；取消单击时必须同步清掉。
+    pressed_at: Cell<Option<Instant>>,
 
     /// Shift 抬起后暂存单击；给延迟到达的组合键 KeyDown 一次作废机会。
     pending: Option<SwitchKey>,
@@ -36,6 +45,7 @@ impl ModeState {
             self.english = false;
         }
         self.tap.cancel();
+        self.pressed_at.set(None);
         self.pending = None;
     }
 
@@ -47,7 +57,27 @@ impl ModeState {
     /// 一次物理修饰键按下 / 抬起：命中单击先待定，返回是否需要安排确认定时器。
     /// 有些客户端的组合键 KeyDown 比 Shift 抬起事件晚到，不能在抬起时直接切模式。
     pub fn modifier_event(&mut self, event: ModifierEvent) -> bool {
-        if !self.tap.key_event(event, self.switch_keys) {
+        self.modifier_event_at(event, Instant::now())
+    }
+
+    /// 可注入单调时间的判定内核，供状态机测试精确覆盖时长边界。
+    fn modifier_event_at(&mut self, event: ModifierEvent, now: Instant) -> bool {
+        // 抬起后的等待期内又出现修饰键事件，先作废旧单击；下一次独立短按由控制器另行确认。
+        self.pending = None;
+        let pressed_at = self.pressed_at.take();
+        let tapped = self.tap.key_event(event, self.switch_keys);
+        if self.tap.is_armed() {
+            self.pressed_at.set(pressed_at.or(Some(now)));
+        }
+        if !tapped {
+            return false;
+        }
+        // 恰好 500ms 仍算短按；超过才是长按。时钟倒退不应制造一次单击。
+        if !pressed_at.is_some_and(|start| {
+            now.checked_duration_since(start)
+                .is_some_and(|duration| duration <= SWITCH_TAP_MAX_DURATION)
+        }) {
+            self.pending = None;
             return false;
         }
         if !self.enabled {
@@ -60,7 +90,7 @@ impl ModeState {
     /// 下一个 KeyDown 若仍带着刚抬起的切换键，就是延迟到达的组合键，作废单击；
     /// 否则先确认单击，确保紧接着输入的普通键按新模式处理。
     pub fn key_down(&mut self, shift: bool, control: bool) -> bool {
-        self.tap.interrupt();
+        self.interrupt();
         let pending = self.pending.take();
         if pending.is_some_and(|key| match key {
             SwitchKey::Shift => shift,
@@ -85,16 +115,21 @@ impl ModeState {
     pub fn cancel_pending(&mut self) {
         self.pending = None;
         self.tap.cancel();
+        self.pressed_at.set(None);
     }
 
     /// 普通键按下（`Shift + A` 里的 A、`⇧Tab` 里的 Tab）：正按着的那次单击作废，模式不动。
     pub fn interrupt(&self) {
         self.tap.interrupt();
+        self.pressed_at.set(None);
     }
 
     /// 与系统聚合的修饰标志对账，抹掉抬起事件漏了的键位（见 [`KeyTap::resync`]）。
     pub fn resync(&self, shift_held: bool, control_held: bool) {
         self.tap.resync(shift_held, control_held);
+        if !self.tap.is_armed() {
+            self.pressed_at.set(None);
+        }
     }
 
     /// 翻转中 / 英模式。关掉内置英文模式时不翻，返回 `false`。

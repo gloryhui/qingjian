@@ -52,6 +52,11 @@ fn slots_of(key: SwitchKey) -> usize {
 }
 
 impl KeyTap {
+    /// 当前是否还有一次未被组合键打断的按下；供平台壳自行判断单击时长。
+    pub fn is_armed(&self) -> bool {
+        self.armed.get().is_some()
+    }
+
     /// 一次物理修饰键事件：命中一次单击返回 `true`。
     ///
     /// 同一个键位的必然按下 / 抬起交替，所以「这个键位还没记着」就是按下、「已经记着」就是抬起；聚合标志
@@ -170,7 +175,9 @@ mod tests {
         let tap = KeyTap::default();
         let keys = only(SwitchKey::Shift);
         assert!(!tap.key_event(down(SwitchKey::Shift, 0, true), keys));
+        assert!(tap.is_armed());
         assert!(tap.key_event(up(SwitchKey::Shift, 0), keys));
+        assert!(!tap.is_armed());
         assert!(!tap.key_event(up(SwitchKey::Shift, 0), keys));
     }
 
@@ -180,7 +187,9 @@ mod tests {
         let tap = KeyTap::default();
         let keys = only(SwitchKey::Shift);
         tap.key_event(down(SwitchKey::Shift, 0, true), keys);
+        assert!(tap.is_armed());
         tap.key_event(other(), keys);
+        assert!(!tap.is_armed());
         assert!(!tap.key_event(up(SwitchKey::Shift, 0), keys));
     }
 
