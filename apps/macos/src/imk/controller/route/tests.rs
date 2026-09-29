@@ -24,6 +24,7 @@ fn shift(mode: &mut ModeState, bare: bool) -> bool {
 fn tap_shift(mode: &mut ModeState) {
     assert!(!shift(mode, true));
     assert!(shift(mode, false));
+    assert!(mode.confirm_pending());
 }
 
 fn engine() -> Engine {
@@ -64,6 +65,28 @@ fn shift_combinations_interrupt_the_tap_in_both_languages() {
             tap_shift(&mut mode);
             assert_eq!(mode.english(), !english);
         }
+    }
+}
+
+#[test]
+fn late_right_shift_chord_keeps_english_route_pure() {
+    let mut mode = mode(&Config::default());
+    tap_shift(&mut mode);
+    for key in ["A", ".", "'", ";"] {
+        assert!(!mode.modifier_event(ModifierEvent {
+            switch: Some(SwitchKey::Shift),
+            slot: 1,
+            bare: true,
+        }));
+        assert!(mode.modifier_event(ModifierEvent {
+            switch: Some(SwitchKey::Shift),
+            slot: 1,
+            bare: false,
+        }));
+        // 迟到的 KeyDown 仍带 Shift，必须先作废待定单击，再做路由。
+        assert!(!mode.key_down(true, false), "Shift+{key}");
+        assert_eq!(Route::key_down(&mode), Route::Passthrough);
+        assert!(mode.english());
     }
 }
 

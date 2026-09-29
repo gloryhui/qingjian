@@ -19,8 +19,9 @@ mod settings;
 use std::cell::RefCell;
 use std::path::PathBuf;
 
+use objc2::rc::Retained;
 use objc2_app_kit::{NSPasteboard, NSPasteboardTypeString};
-use objc2_foundation::{NSProcessInfo, NSRect, NSString};
+use objc2_foundation::{NSProcessInfo, NSRect, NSString, NSTimer};
 use qingjian_core::{
     Candidate, CandidateKind, CloudWord, Engine, Language, NoInputLogger, Prediction,
 };
@@ -133,6 +134,9 @@ pub struct Host {
 
     /// 中 / 英模式与单击切换键的状态，见 [`ModeState`]。进程级一份，所有应用共用。
     pub mode: ModeState,
+
+    /// Shift 单击等待迟到的组合键 KeyDown 时的一次性定时器。
+    pub pending_switch: Option<Retained<NSTimer>>,
 
     /// 上次从系统读到的文本替换（激活输入法时重读），`[general] system_text_replacements` 开着时并进自定义短语。
     text_replacements: Vec<TextReplacement>,

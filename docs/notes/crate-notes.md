@@ -218,12 +218,12 @@ IMK 输入法，源码按 `app / host / imk / candidates / menubar / preferences
   单击判定用 `qingjian-platform::key_tap::KeyTap`——它按**物理键位**记（`ModifierEvent { switch, slot, bare }`，macOS 左 / 右 Shift 是两个 slot，
   聚合的 `modifierFlags` 分不出左右），按下那一刻还要求**没搭着别的修饰键**（`bare`，`imk/modifiers.rs::bare_press` 判 ⌘⌥⌃ 与 Fn，Caps Lock 亮着不算），
   抬起时手上只剩这一个键位才命中；`FlagsChanged` 在 `imk/controller/mode.rs::handle_flags` 里喂给它，判定之后再用聚合标志 `resync` 对账
-  （输入法可能在按住 Shift 时才被激活，漏掉抬起会留幽灵按下；对账必须在判定之后，否则抬起会被当成按下）。KeyDown 一律 `interrupt` 作废正按着的那次单击。
+  （输入法可能在按住 Shift 时才被激活，漏掉抬起会留幽灵按下；对账必须在判定之后，否则抬起会被当成按下）。抬起命中的单击先待定 150 ms：迟到的 KeyDown 若仍带原切换键标志就作废，否则在处理该 KeyDown 前确认；没有后续按键则定时确认。KeyDown 仍 `interrupt` 作废正按着的那次单击；输入源停用、配置变化会丢弃待定单击。定时回调核对定时器身份并用原客户端做组句收尾。
   Caps Lock 只管大小写，状态项靠现成的 0.25 s 轮询带 ⇪；`[general] shift_letter = "compose"` 也**只认真正按住 Shift 打出的大写**（`imk/controller/text.rs` 要 `Modifiers.shift`），
   Caps Lock 送来的大写仍旧直接交给应用、不进组句。
   英文模式始终纯直通，`ModeState::passthrough()` 只看 `english`。
-  `dispatch_event` 在应用识别、修饰标志 / 键码读取、提示清理及字符读取之前调用 `imk/controller/route/mod.rs::Route::key_down`，
-  只 `mode.interrupt()` 作废单击；英文结果为 `Passthrough` 并立即返回 false，整个事件交还 macOS / 当前布局 / 应用。
+  `dispatch_event` 在应用识别、键码读取、提示清理及字符读取之前只读取 KeyDown 的修饰标志以消解待定单击，然后调用 `imk/controller/route/mod.rs::Route::key_down`；
+  英文结果为 `Passthrough` 并立即返回 false，整个事件交还 macOS / 当前布局 / 应用。
   不调用 `insertText`、`note_passthrough`、`handle_text` 或 Engine，也不看 composition、英文候选配置、应用名单和翻译状态。
   已删除 `english_keyboard_text`、布局重解码与旧 ABC 解码测试；状态机及路由测试覆盖双向切换、组合键、候选配置解耦、组句收尾和中文标点。
   `handle_text` 只负责中文模式，保留中文模式的英文词识别；Windows / Linux 的英文候选实现不变。

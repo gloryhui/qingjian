@@ -7,7 +7,7 @@ use objc2::rc::{Allocated, Retained};
 use objc2::runtime::{AnyObject, Sel};
 use objc2::{define_class, msg_send, sel};
 use objc2_app_kit::{NSEvent, NSEventMask, NSEventModifierFlags, NSEventType, NSMenu};
-use objc2_foundation::NSObjectProtocol;
+use objc2_foundation::{NSObjectProtocol, NSTimer};
 use objc2_input_method_kit::{IMKInputController, IMKServer};
 use qingjian_core::Candidate;
 use qingjian_platform::Modifiers;
@@ -87,6 +87,35 @@ define_class!(
             }
         }
 
+        /// 单击 Shift 的短暂等待期结束：若没有迟到的组合键 KeyDown，就确认切换。
+        #[unsafe(method(confirmPendingSwitch:))]
+        fn confirm_pending_switch(&self, timer: Option<&NSTimer>) {
+            let done = catch_panic("confirmPendingSwitch", || {
+                let Some(timer) = timer else { return };
+                let Some(client) = timer.userInfo() else {
+                    return;
+                };
+                let flipped = host::with(|h| {
+                    if !h
+                        .pending_switch
+                        .as_ref()
+                        .is_some_and(|scheduled| std::ptr::eq(&**scheduled, timer))
+                    {
+                        return false;
+                    }
+                    h.pending_switch.take();
+                    h.mode.confirm_pending()
+                })
+                .unwrap_or(false);
+                if flipped {
+                    self.switch_language(TextClient::new(&client));
+                }
+            });
+            if done.is_none() {
+                recover_from_panic(None);
+            }
+        }
+
         /// 应用要求立刻结束本次输入（切换焦点、切换输入法等）。
         #[unsafe(method(commitComposition:))]
         fn commit_composition(&self, client: Option<&AnyObject>) {
@@ -151,6 +180,10 @@ define_class!(
                 }
                 // 切换输入源时无论如何都收掉候选框，不能留一个孤儿窗口在屏幕上
                 host::with(|h| {
+                    if let Some(timer) = h.pending_switch.take() {
+                        timer.invalidate();
+                    }
+                    h.mode.cancel_pending();
                     h.cancel_prediction();
                     h.window.hide();
                     h.indicator.deactivate();
@@ -212,12 +245,29 @@ impl QingjianInputController {
 
     /// 英文 KeyDown 只作废修饰键单击并放行；中文模式才识别应用、快捷键与文本。
     fn dispatch_event(&self, event: &NSEvent, client: TextClient<'_>) -> bool {
-        // 必须早于应用识别、字符读取和所有 Engine 调用；组合键仍须作废 Shift 单击。
-        if event.r#type() == NSEventType::KeyDown
-            && host::with(|h| Route::key_down(&h.mode)).unwrap_or(Route::Passthrough)
+        if event.r#type() == NSEventType::KeyDown {
+            // 先用系统给这次 KeyDown 的修饰标志消解待定单击；不读取字符。
+            // Shift 抬起回调可能先于组合键 KeyDown 到达，仍带 Shift 的 KeyDown 必须作废那次切换。
+            let flags = event.modifierFlags();
+            let flipped = host::with(|h| {
+                if let Some(timer) = h.pending_switch.take() {
+                    timer.invalidate();
+                }
+                h.mode.key_down(
+                    flags.contains(NSEventModifierFlags::Shift),
+                    flags.contains(NSEventModifierFlags::Control),
+                )
+            })
+            .unwrap_or(false);
+            if flipped {
+                self.switch_language(client);
+            }
+            // 必须早于应用识别、字符读取和所有 Engine 调用。
+            if host::with(|h| Route::key_down(&h.mode)).unwrap_or(Route::Passthrough)
                 == Route::Passthrough
-        {
-            return false;
+            {
+                return false;
+            }
         }
         self.note_application(&client);
         if self.in_login_window() {
