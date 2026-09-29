@@ -174,6 +174,7 @@ fn main() {
         }
     };
     engine.set_fuzzy(config.fuzzy);
+    engine.set_emoji_candidates(config.general.emoji_candidates);
     // 拼音侧与形码侧在 `configure_code_table` 里一起装配（双拼 / 注音 / 混输都在那）
     engine.set_traditional_mode(config.general.traditional);
     engine.set_learning(config.general.learning);

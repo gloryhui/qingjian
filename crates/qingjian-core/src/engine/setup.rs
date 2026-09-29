@@ -226,6 +226,11 @@ impl Engine {
         self
     }
 
+    /// 开关普通候选中的 emoji（配置项 `[general] emoji_candidates`，缺省关闭）。
+    pub fn set_emoji_candidates(&mut self, enabled: bool) {
+        self.emoji_candidates = enabled;
+    }
+
     pub fn with_fuzzy(mut self, rules: FuzzyRules) -> Self {
         self.fuzzy = rules;
         self

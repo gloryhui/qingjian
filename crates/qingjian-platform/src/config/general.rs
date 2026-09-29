@@ -53,6 +53,9 @@ pub struct GeneralConfig {
     /// macOS 保留此字段的配置兼容，但「英」始终纯直通，不读取此开关。
     pub english_candidates: bool,
 
+    /// 普通中文和英文候选中是否插入对应的 Emoji；缺省关闭。
+    pub emoji_candidates: bool,
+
     /// 繁体输出模式。
     pub traditional: bool,
     /// 中文模式下中英混输时中文候选总排在英文词前面。缺省关：拼音不像话的输入（`hello`）英文词排第一，
@@ -130,6 +133,7 @@ impl Default for GeneralConfig {
             font: String::new(),
             preedit: PreeditMode::default(),
             english_candidates: true,
+            emoji_candidates: false,
             traditional: false,
             chinese_first: false,
             shift_letter: ShiftLetter::default(),

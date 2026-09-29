@@ -216,6 +216,9 @@ impl Host {
             (Setting::HorizontalGrid, SettingValue::Bool(on)) => {
                 self.settings.set_bool("general", "horizontal_grid", on);
             }
+            (Setting::EmojiCandidates, SettingValue::Bool(on)) => {
+                self.settings.set_bool("general", "emoji_candidates", on);
+            }
             (Setting::Preedit, SettingValue::Index(index)) => {
                 if let Some(mode) = PreeditMode::ALL.get(index) {
                     self.settings.set_value("general", "preedit", mode.key());
