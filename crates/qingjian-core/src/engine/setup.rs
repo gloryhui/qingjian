@@ -482,6 +482,14 @@ impl Engine {
     pub fn set_extra_dictionaries(&mut self, dictionaries: Vec<Dictionary>) {
         self.extra_dictionaries = dictionaries;
         self.forget_span_cache();
+        // 未登录组合候选的词库索引也是从静态 + 附加词库建的，导入 / 移除 / 禁用之后必须重建，
+        // 否则要重启进程才生效。
+        self.forget_composition_index();
+    }
+
+    /// 词库内容变了：组合候选的词库索引作废，下次用到时重建。
+    pub(super) fn forget_composition_index(&mut self) {
+        self.composition_pairs = std::cell::OnceCell::new();
     }
 
     pub fn extra_dictionaries(&self) -> &[Dictionary] {

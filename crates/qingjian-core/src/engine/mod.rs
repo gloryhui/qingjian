@@ -55,7 +55,7 @@ pub use query::Query;
 pub use raw::RawPreedit;
 pub use session::EngineSession;
 pub use statistics::{BOOKS, Book, NoUsageMeter, Usage, UsageMeter, UsageSummary, book_scale};
-pub use timings::Timings;
+pub use timings::{JointStats, Timings};
 pub use translator::{NoTranslator, Translator};
 pub use vocabulary::{
     FRESH_UNTIL, LevelCount, NoVocabularyTracker, VocabularySummary, VocabularyTracker,
@@ -218,6 +218,25 @@ pub struct Engine {
 
     /// 整句转换的格子候选缓存：跨按键复用，学习数据一变就清（见 [`Self::forget_span_cache`]）。
     span_cache: std::cell::RefCell<sentence::SpanCache>,
+
+    /// 词库里「同词共现」的字对索引，未登录组合候选的质量门槛用；首次用到时建一次（见 [`query`]）。
+    composition_pairs: std::cell::OnceCell<Box<[u64]>>,
+
+    /// 最近一次查询里联合整句搜索的规模；只给评测和诊断读，不参与排序。
+    joint_stats: std::cell::Cell<JointStats>,
+
+    /// 测试用：最近一次查询里未登录组合候选**截断之前**的完整排序池。
+    /// 用来断言某个组合「已经按门槛进了池子」，只是没挤进前几条。
+    #[cfg(test)]
+    last_composed_pool: std::cell::RefCell<Vec<String>>,
+
+    /// 测试用：最近一次查询里真的跑过整段探针的切分下标（`segmentations` 里第几条）。
+    #[cfg(test)]
+    last_probed_segmentations: std::cell::RefCell<Vec<usize>>,
+
+    /// 测试用：最近一次查询里每条有资格切分的廉价证据 `(下标, 覆盖率, 平均词长, 强度)`。
+    #[cfg(test)]
+    last_cheap_evidence: std::cell::RefCell<Vec<(usize, f64, f64, f64)>>,
 
     /// 本次会话经我们上屏的文本，应用不给上下文时用它联想。
     history: InputHistory,
@@ -398,6 +417,14 @@ impl Engine {
             neural_context: RESCORE_CONTEXT_CHARS,
             correction_cache: std::cell::RefCell::new(None),
             span_cache: std::cell::RefCell::new(sentence::SpanCache::default()),
+            composition_pairs: std::cell::OnceCell::new(),
+            joint_stats: std::cell::Cell::new(JointStats::default()),
+            #[cfg(test)]
+            last_composed_pool: std::cell::RefCell::new(Vec::new()),
+            #[cfg(test)]
+            last_probed_segmentations: std::cell::RefCell::new(Vec::new()),
+            #[cfg(test)]
+            last_cheap_evidence: std::cell::RefCell::new(Vec::new()),
             recent_commits: Vec::new(),
             logger: input_log::MutedLogger::new(Box::new(NoInputLogger)),
             private: false,

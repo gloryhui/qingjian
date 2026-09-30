@@ -3,8 +3,13 @@
 use super::*;
 
 mod code;
+mod composed;
 mod english_tail;
 mod joint;
+
+#[cfg(test)]
+pub(crate) use joint::select_probe_candidates_for_test as select_probe_candidates;
+
 mod result;
 mod snapshot;
 
@@ -21,6 +26,7 @@ impl Engine {
     /// 上屏之后接着组句；见 [`Composition::scope`]。
     pub fn query(&self) -> Result<Query, ParseError> {
         self.last_rescored.set(false);
+        self.joint_stats.set(JointStats::default());
         let mut query = match self.query_inner() {
             Ok(query) => query,
             Err(error) => {
@@ -722,6 +728,31 @@ impl Engine {
             }
         }
         expanded
+    }
+
+    /// 测试用：最近一次查询里未登录组合候选截断之前的完整排序池。
+    #[cfg(test)]
+    pub(crate) fn last_composed_pool(&self) -> Vec<String> {
+        self.last_composed_pool.borrow().clone()
+    }
+
+    /// 测试用：最近一次查询里跑过整段探针的切分下标。
+    #[cfg(test)]
+    pub(crate) fn last_probed_segmentations(&self) -> Vec<usize> {
+        self.last_probed_segmentations.borrow().clone()
+    }
+
+    /// 测试用：最近一次查询里每条有资格切分的廉价证据 `(下标, 覆盖率, 平均词长, 强度)`。
+    #[cfg(test)]
+    pub(crate) fn last_cheap_evidence(&self) -> Vec<(usize, f64, f64, f64)> {
+        self.last_cheap_evidence.borrow().clone()
+    }
+
+    /// 最近一次查询里联合整句搜索的规模（切分数、词格数、路径数、组合候选数）。评测与诊断用。
+    ///
+    /// 只统计 `query_inner` 里拼音侧的联合整句搜索：形码、英文、快捷这些不走那一条路。
+    pub fn last_joint_stats(&self) -> JointStats {
+        self.joint_stats.get()
     }
 
     /// 本地整句转换把最优切分转成的汉字，给云端当参考（问字模式里就是问题的汉字形式）；转不出或有占位音节为空。
