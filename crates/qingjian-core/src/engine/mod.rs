@@ -234,9 +234,9 @@ pub struct Engine {
     #[cfg(test)]
     last_probed_segmentations: std::cell::RefCell<Vec<usize>>,
 
-    /// 测试用：最近一次查询里每条有资格切分的廉价证据 `(下标, 覆盖率, 强度)`。
+    /// 测试用：最近一次查询里每条有资格切分的廉价证据 `(下标, 覆盖率, 平均词长, 强度)`。
     #[cfg(test)]
-    last_cheap_evidence: std::cell::RefCell<Vec<(usize, f64, f64)>>,
+    last_cheap_evidence: std::cell::RefCell<Vec<(usize, f64, f64, f64)>>,
 
     /// 本次会话经我们上屏的文本，应用不给上下文时用它联想。
     history: InputHistory,

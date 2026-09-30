@@ -316,9 +316,9 @@ fn same_structure_key_does_not_make_two_segmentations_semantically_equal() {
             syllables: syllables.into_iter().map(Syllable::complete).collect(),
         })
         .collect();
-    let chosen = select_probe_candidates(&[0, 1], &flat, &[(1.0, 1.0), (2.0, 1.0)], 1);
+    let chosen = select_probe_candidates(&[0, 1], &flat, &[(0.5, 1.0, 1.0), (0.5, 2.0, 1.0)], 1);
     assert_eq!(chosen, vec![1], "同结构组要按证据选代表，不看 parser 名次");
-    let chosen = select_probe_candidates(&[0, 1], &flat, &[(1.0, 1.0), (2.0, 1.0)], 2);
+    let chosen = select_probe_candidates(&[0, 1], &flat, &[(0.5, 1.0, 1.0), (0.5, 2.0, 1.0)], 2);
     assert_eq!(chosen, vec![1, 0], "名额够时同组其他成员也不被代表掉");
 
     // 真实查询：`#0 an xian an` 与 `#1 an xia nan` 同结构签名 (3, 0)
@@ -337,17 +337,18 @@ fn same_structure_key_does_not_make_two_segmentations_semantically_equal() {
     engine.set_input("anxianan");
     let query = engine.query().unwrap();
     let evidence = engine.last_cheap_evidence();
-    let first = evidence
+    let (_, first_coverage, first_length, _) = *evidence
         .iter()
-        .find(|(index, _, _)| *index == 0)
+        .find(|(index, ..)| *index == 0)
         .expect("条 0");
-    let second = evidence
+    let (_, second_coverage, second_length, _) = *evidence
         .iter()
-        .find(|(index, _, _)| *index == 1)
+        .find(|(index, ..)| *index == 1)
         .expect("条 1");
     assert!(
-        second.1 > first.1,
-        "第 2 条的词法证据要强于第 1 条：{evidence:?}"
+        second_coverage > first_coverage
+            || (second_coverage == first_coverage && second_length > first_length),
+        "第 2 条的词法证据要强于第 1 条（覆盖率不劣、平均词长更长）：{evidence:?}"
     );
     let probed = engine.last_probed_segmentations();
     let zero = probed.iter().position(|index| *index == 0);
@@ -362,4 +363,102 @@ fn same_structure_key_does_not_make_two_segmentations_semantically_equal() {
         "an xia nan",
         "第 2 条靠高频的 `安下` 胜出"
     );
+}
+
+/// RED→GREEN：覆盖完整度是第一判据，局部一个长词不能天然压过覆盖更完整的切分。
+///
+/// A：9 个音节里只盖住 3 个，那 3 个是一个 3 音节词 → 覆盖率 0.333、平均词长 3.0；
+/// B：8 个音节全盖住，拆成 5 个词 → 覆盖率 1.0、平均词长 1.8。
+/// 只看平均词长会让 A 赢，这是错的。
+#[test]
+fn coverage_completeness_outranks_a_local_long_word() {
+    use crate::engine::query::select_probe_candidates;
+    let segmentations: Vec<Segmentation> = [["a", "b"], ["c", "d"]]
+        .into_iter()
+        .map(|syllables| Segmentation {
+            syllables: syllables.into_iter().map(Syllable::complete).collect(),
+        })
+        .collect();
+    // (覆盖率, 平均词长, 强度)
+    let partial_long_word = (3.0 / 9.0, 3.0, 1.0);
+    let complete_short_words = (1.0, 1.8, 1.0);
+    let chosen = select_probe_candidates(
+        &[0, 1],
+        &segmentations,
+        &[partial_long_word, complete_short_words],
+        1,
+    );
+    assert_eq!(
+        chosen,
+        vec![1],
+        "覆盖更完整的切分必须拿到名额，不能因为局部那个词更长就输"
+    );
+
+    // 覆盖率相同时，平均词长说话的分量还在
+    let chosen = select_probe_candidates(
+        &[0, 1],
+        &segmentations,
+        &[(0.5, 1.8, 1.0), (0.5, 3.0, 1.0)],
+        1,
+    );
+    assert_eq!(chosen, vec![1], "覆盖率相同时平均词长决定");
+}
+
+/// 廉价证据只建在**词级候选**上，而词级候选主要是整段命中与从开头开始的 prefix 命中，
+/// 不是完整词图。决定性证据落在输入中段时它看不到——限制如实建模，不假装成完整词图证据。
+///
+/// 这里 `安安`（`an xi an an` 的位置 2..4）是唯一的强证据，它不是任何切分的 prefix，
+/// 所以词级候选里根本没有它、这条切分的覆盖率必然缺一块；但整段探针走的是真词格，
+/// 拿到名额之后照样看得到它。
+#[test]
+fn cheap_evidence_only_sees_prefix_hits_not_the_whole_lattice() {
+    let dictionary = Dictionary::parse(concat!(
+        "安\tan\t9000\n",
+        "现\txian\t9000\n",
+        "下\txia\t9000\n",
+        "南\tnan\t9000\n",
+        "西\txi\t9000\n",
+        "阿\ta\t9000\n",
+        "安安\tan an\t20000\n",
+    ))
+    .unwrap();
+    let mut engine = Engine::new(dictionary);
+    engine.set_input("anxianan");
+    let query = engine.query().unwrap();
+
+    // 词级候选（cheap evidence 的唯一数据源）里没有中段的 `安安`
+    let items: Vec<String> = query
+        .candidates
+        .items
+        .iter()
+        .map(|candidate| candidate.text.clone())
+        .collect();
+    assert!(
+        !items.iter().any(|text| text == "安安"),
+        "`安安` 不是任何切分的 prefix，不该出现在词级候选里：{items:?}"
+    );
+
+    // 所以这条切分的覆盖率必然缺一块，不能当成完整词图证据
+    let evidence = engine.last_cheap_evidence();
+    let (_, target_coverage, _, _) = *evidence
+        .iter()
+        .find(|(index, ..)| *index == 2)
+        .expect("条 2");
+    assert!(
+        target_coverage < 1.0,
+        "中段证据不可见，覆盖率必然缺一块：{evidence:?}"
+    );
+
+    // 但整段探针走真词格：名额够时它照样进，中段证据在那里看得见并让它胜出
+    assert_eq!(
+        engine
+            .last_probed_segmentations()
+            .iter()
+            .filter(|index| **index == 2)
+            .count(),
+        1,
+        "覆盖率低只影响抢名额的排序，名额够时它照样进整段探针"
+    );
+    assert_eq!(query.segmentations[0].to_string(), "an xi an an");
+    assert_eq!(query.candidates.items[0].text, "安西安安");
 }

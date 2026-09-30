@@ -223,7 +223,14 @@ impl Engine {
             *self.last_cheap_evidence.borrow_mut() = eligible
                 .iter()
                 .zip(&evidence)
-                .map(|(index, evidence)| (*index, evidence.average_word_length, evidence.strength))
+                .map(|(index, evidence)| {
+                    (
+                        *index,
+                        evidence.coverage,
+                        evidence.average_word_length,
+                        evidence.strength,
+                    )
+                })
                 .collect();
         }
         probes
@@ -419,13 +426,31 @@ fn covers(path: &Conversion, segmentation: &Segmentation) -> bool {
 /// 一条切分的**廉价词法证据**：只用已经排好的词级候选 `items`，沿这条切分从第一个音节起
 /// 贪心找最长的可选词往前推。
 ///
-/// 零额外词库查询，也完全不看 parser 名次：一个音节串能用**更少的词**盖住，说明词库更认这条切分
-/// （`an xi an an` 用 `安溪` + `安安` 两个词盖住，`an xian an` 只能一个字一个字盖）。
-/// 同覆盖率时看强度：用到的词在词级候选里排得越前、用户选过越多，证据越强。
+/// 排序是三级：
+///
+/// 1. **覆盖率**（`coverage`）：被词盖住的音节占全部音节的比例。这是第一判据——只盖住一小段、
+///    哪怕那一段是个长词，也不该压过一条覆盖更完整的切分。少了这一级时
+///    「9 个音节里只盖住 3 个、但那 3 个是一个 3 音节词」（平均词长 3.0）会压过
+///    「8 个音节全盖住、平均词长 1.8」。
+/// 2. **平均词长**（`average_word_length`）：覆盖率相同时，盖住同样的音节能用更少的词，
+///    说明词库更认这条切分（`an xi an an` 用 `安溪` + `安安` 两个词盖住，`an xian an` 只能一个字一个字盖）。
+/// 3. **强度**（`strength`）：用到的词在词级候选里排得越前、用户选过越多，越强。
+///
+/// # 数据源只到词级候选这一层
+///
+/// `items` 是**词级查询的成品**：候选来自「整段输入命中」以及「从输入开头开始的 prefix 命中」
+/// （见 `engine::query::query_phonetic`），**不等价于完整词图**。所以输入中段出现、又不在任何
+/// prefix 上的词，这里**看不到**——`an xi an an` 的 `安安`（中段 2..4）就不会进这份证据。
+/// 后果是这条切分的覆盖率会被低估。这里刻意不去补一次完整词格查询（那正是整段探针要花的钱），
+/// 而是把这个限制如实建模：覆盖率低只影响**抢整段探针名额**时的排序，拿到名额之后整段窄搜索
+/// 走的是真词格，中段证据照样看得见。
+/// 对应回归：`cheap_evidence_only_sees_prefix_hits_not_the_whole_lattice`。
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 struct CheapEvidence {
-    /// 盖住整段时的**平均词长**（音节数）：词库里越认这条切分，能用的词越长、用到的词越少。
-    /// 一个词都没用上就是 0。
+    /// 被词盖住的音节占全部音节的比例（0..=1）。**排序的第一判据**。
+    coverage: f64,
+
+    /// 盖住那部分时的平均词长（音节数）。一个词都没用上就是 0。
     average_word_length: f64,
 
     /// 用到的词在词级候选里的强度之和：名次越靠前越大，再加用户选择次数。
@@ -433,15 +458,21 @@ struct CheapEvidence {
 }
 
 impl CheapEvidence {
-    /// 平均词长越长越强；一样长时看强度（`f64` 没有 `Ord`，单独写一个比较）。
+    /// 覆盖率 → 平均词长 → 强度，逐级比较（`f64` 没有 `Ord`，逐级手写）。
     fn is_stronger_than(&self, other: &Self) -> bool {
-        match self
-            .average_word_length
-            .total_cmp(&other.average_word_length)
-        {
+        match self.coverage.total_cmp(&other.coverage) {
             std::cmp::Ordering::Greater => true,
             std::cmp::Ordering::Less => false,
-            std::cmp::Ordering::Equal => self.strength > other.strength,
+            std::cmp::Ordering::Equal => {
+                match self
+                    .average_word_length
+                    .total_cmp(&other.average_word_length)
+                {
+                    std::cmp::Ordering::Greater => true,
+                    std::cmp::Ordering::Less => false,
+                    std::cmp::Ordering::Equal => self.strength > other.strength,
+                }
+            }
         }
     }
 }
@@ -503,11 +534,13 @@ fn cheap_evidence(
                 words += 1;
                 strength += score;
             }
-            // 这个词库在这个位置一个字都没有（罕见的残缺音节）：跳过，不计覆盖率
+            // 这一步没有可用的词（词级候选只覆盖 prefix，或这个词库没有这个音节的字）：
+            // 跳过，不计覆盖率
             None => position += 1,
         }
     }
     CheapEvidence {
+        coverage: covered as f64 / total as f64,
         average_word_length: if words == 0 {
             0.0
         } else {
@@ -570,15 +603,17 @@ fn select_probe_candidates(
 
 /// [`select_probe_candidates`] 的测试入口。
 #[cfg(test)]
+/// `evidence` 每项是 `(覆盖率, 平均词长, 强度)`。
 pub(crate) fn select_probe_candidates_for_test(
     eligible: &[usize],
     segmentations: &[Segmentation],
-    evidence: &[(f64, f64)],
+    evidence: &[(f64, f64, f64)],
     limit: usize,
 ) -> Vec<usize> {
     let evidence: Vec<CheapEvidence> = evidence
         .iter()
-        .map(|(average_word_length, strength)| CheapEvidence {
+        .map(|(coverage, average_word_length, strength)| CheapEvidence {
+            coverage: *coverage,
             average_word_length: *average_word_length,
             strength: *strength,
         })

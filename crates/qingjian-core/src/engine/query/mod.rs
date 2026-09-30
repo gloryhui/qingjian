@@ -742,9 +742,9 @@ impl Engine {
         self.last_probed_segmentations.borrow().clone()
     }
 
-    /// 测试用：最近一次查询里每条有资格切分的廉价证据 `(下标, 覆盖率, 强度)`。
+    /// 测试用：最近一次查询里每条有资格切分的廉价证据 `(下标, 覆盖率, 平均词长, 强度)`。
     #[cfg(test)]
-    pub(crate) fn last_cheap_evidence(&self) -> Vec<(usize, f64, f64)> {
+    pub(crate) fn last_cheap_evidence(&self) -> Vec<(usize, f64, f64, f64)> {
         self.last_cheap_evidence.borrow().clone()
     }
 
