@@ -227,100 +227,139 @@ fn shuangpin_decodes_to_a_single_segmentation_and_keeps_the_word() {
 /// parser 第 4 条切分才是对的，而且它落在旧的「按 parser 顺序消费探针预算」的射程之外：
 /// 8 条有资格切分的前三条各要 36 / 36 / 44 个词格，旧预算 128 在第三条之后只剩 12，
 /// 第 4 条（也是 44）直接被 `break` 掉，连探针都跑不到。
-const FOURTH_SEGMENTATION_INPUT: &str = "xiliaxinixiaanxianan";
+/// 这条输入有 8 条完整切分，命中「probe 名额只有 4 个」的场景。
+const MANY_SEGMENTATIONS_INPUT: &str = "xiliaxinixiaanxianan";
 
-/// 只有第 4 条切分 `xi lia xi ni xia an xi a nan` 能在末尾拼出 `西阿南`（三音节跨度），
-/// 其余切分的同一段是 `xian an` / `xia nan` / `xi an an`，都没有这个词。整段没有完整词，
-/// 所以赢不了「整段完整词」这条捷径。
-fn fourth_segmentation_dictionary() -> Dictionary {
+/// 只有第 6 条切分 `xi li a xi ni xia an xian an` 能在开头用上三音节词 `西里阿`，
+/// 于是它用 4 个词盖住 9 个音节（平均词长 2.25），其余切分要么用 4 个词盖 8 个音节（2.0）、
+/// 要么只能一个字一个字盖（1.5）。整段没有完整词，赢不了「整段完整词」这条捷径。
+fn many_segmentations_dictionary() -> Dictionary {
     Dictionary::parse(concat!(
         "西\txi\t9000\n",
-        "俩\tlia\t5000\n",
-        "尼\tni\t6000\n",
+        "里\tli\t9000\n",
+        "阿\ta\t9000\n",
+        "俩\tlia\t9000\n",
+        "尼\tni\t9000\n",
         "下\txia\t9000\n",
         "安\tan\t9000\n",
         "南\tnan\t9000\n",
-        "现\txian\t7000\n",
-        "阿\ta\t1000\n",
-        "西俩\txi lia\t8000\n",
-        "西尼\txi ni\t8000\n",
-        "下安\txia an\t8000\n",
-        "西阿南\txi a nan\t9000\n",
-        "现安\txian an\t1000\n",
-        "下南\txia nan\t1000\n",
-        "西安\txi an\t1000\n",
+        "现\txian\t9000\n",
+        "西里阿\txi li a\t20000\n",
+        "西俩\txi lia\t100\n",
+        "西尼\txi ni\t100\n",
+        "下安\txia an\t100\n",
+        "现安\txian an\t9000\n",
+        "下南\txia nan\t100\n",
     ))
     .unwrap()
 }
 
+/// RED→GREEN：正确的切分排在 parser 第 7 条（整段探针名额只有 4 个），
+/// 靠**廉价证据**抢进整段探针，再靠只有它拼得出的三音节词胜出。
+///
+/// 词级候选里只有 `西里阿`（第 7、8 条切分的前缀）和 `西俩`（第 1…6 条切分的前缀）两个多音节词；
+/// 第 7、8 条因此能用 3 + 1 个词盖住 9 个音节里的 4 个，平均词长 2.0，比前面各条的 1.5 / 1.33 都长。
+///
+/// 旧实现按 parser 顺序拿探针名额（前 4 条是 `#0..#3`），第 7 条连整段探针都跑不到，
+/// 测试在旧实现下首选 `西俩西尼下安现安`，不是答案。
 #[test]
-fn fourth_parser_segmentation_still_gets_evidence_and_wins() {
-    let segmentations = parser::segment(FOURTH_SEGMENTATION_INPUT).unwrap();
+fn a_late_segmentation_wins_a_probe_slot_on_cheap_evidence() {
+    let segmentations = parser::segment(MANY_SEGMENTATIONS_INPUT).unwrap();
     assert_eq!(segmentations[0].to_string(), "xi lia xi ni xia an xian an");
-    assert_eq!(segmentations[1].to_string(), "xi lia xi ni xia an xia nan");
-    assert_eq!(segmentations[2].to_string(), "xi lia xi ni xia an xi an an");
     assert_eq!(
-        segmentations[3].to_string(),
-        "xi lia xi ni xia an xi a nan",
-        "第 4 条才是对的"
+        segmentations[6].to_string(),
+        "xi li a xi ni xia an xian an",
+        "第 7 条才是对的"
     );
-    // 没有整段完整词：赢不了捷径
-    let mut engine = Engine::new(fourth_segmentation_dictionary());
-    engine.set_input(FOURTH_SEGMENTATION_INPUT);
+
+    let mut engine = Engine::new(many_segmentations_dictionary());
+    engine.set_input(MANY_SEGMENTATIONS_INPUT);
     let query = engine.query().unwrap();
-    let stats = engine.last_joint_stats();
-    assert_eq!(stats.eligible_segmentations, 8);
-    // 第 4 条（下标 3）必须拿到探针证据：它排在 parser 名次的后半，旧的"按 parser 顺序消费预算"
-    // 在它之前就把预算花光了。探针名额按结构轮转分配，每个结构第一轮各拿一个，所以它进得来。
+
+    // 廉价证据覆盖了全部有资格切分，而且第 7 条不弱于任何排在它前面的切分
+    let evidence = engine.last_cheap_evidence();
+    assert_eq!(evidence.len(), 8, "每条有资格的切分都要有廉价证据");
+    for slot in 0..6 {
+        assert!(
+            evidence[6].1 >= evidence[slot].1,
+            "第 7 条的词法证据不能弱于第 {} 条：{evidence:?}",
+            slot + 1
+        );
+    }
+
+    // 它因此拿到整段探针名额，并且排在 parser 靠前的那些前面
     let probed = engine.last_probed_segmentations();
     assert!(
-        probed.contains(&3),
-        "第 4 条切分必须拿到探针证据，不能因为 parser 位置被饿死：{probed:?}"
+        probed.contains(&6),
+        "第 7 条必须靠廉价证据抢进整段探针：{probed:?}"
     );
-    assert_eq!(
-        query.candidates.items[0].text, "西俩西尼下安西阿南",
-        "第 4 条切分靠句尾那个只有它拼得出的三音节词胜出"
-    );
+    assert_eq!(probed[0], 6, "廉价证据最强的先拿名额：{probed:?}");
+    assert_eq!(query.candidates.items[0].text, "西里阿西尼下安现安");
     assert_eq!(
         query.segmentations[0].to_string(),
-        "xi lia xi ni xia an xi a nan"
+        "xi li a xi ni xia an xian an"
     );
 }
 
-/// 探针顺序按结构轮转：parser 名次不决定谁先拿到证据。
+/// RED→GREEN：两条切分的 `StructureKey` 完全相同（都是 3 个完整音节），
+/// 后一条的词法证据更强时不能被前一条永久代表掉。
+///
+/// 词级候选里 `安下`（第 2 条切分的前缀 `an xia`）存在、`安现`（第 1 条切分的前缀 `an xian`）不存在：
+/// 第 2 条能用 2 个词盖住 3 个音节（平均词长 2.0），第 1 条只能一个字一个字盖（1.0）。
 #[test]
-fn probe_order_rotates_structures_instead_of_walking_parser_order() {
-    use crate::engine::query::probe_order;
-    // 八条切分八个不同结构（每条的两个尾巴音节长度都不一样），轮转后第一轮就是全体：
-    // 结构不同的切分在各自组里都是第一个，"parser 排第 4 条"照样第一轮拿到证据。
-    let segmentations: Vec<Segmentation> = (0..8)
-        .map(|index| {
-            let mut syllables = vec![Syllable::complete("xi"), Syllable::complete("lia")];
-            for tail in 0..=index {
-                syllables.push(Syllable::complete(if tail % 2 == 0 { "an" } else { "nan" }));
-            }
-            Segmentation { syllables }
+fn same_structure_key_does_not_make_two_segmentations_semantically_equal() {
+    use crate::engine::query::select_probe_candidates;
+    // 纯选择逻辑：名额只够一个时，同结构组里证据更强的那个才是代表
+    let flat: Vec<Segmentation> = [["fang", "an"], ["fan", "gan"]]
+        .into_iter()
+        .map(|syllables| Segmentation {
+            syllables: syllables.into_iter().map(Syllable::complete).collect(),
         })
         .collect();
-    let eligible: Vec<usize> = (0..segmentations.len()).collect();
-    let order = probe_order(&eligible, &segmentations);
-    assert_eq!(
-        order, eligible,
-        "每个结构各一条时第一轮就是全体，不看 parser 前缀"
-    );
+    let chosen = select_probe_candidates(&[0, 1], &flat, &[(1.0, 1.0), (2.0, 1.0)], 1);
+    assert_eq!(chosen, vec![1], "同结构组要按证据选代表，不看 parser 名次");
+    let chosen = select_probe_candidates(&[0, 1], &flat, &[(1.0, 1.0), (2.0, 1.0)], 2);
+    assert_eq!(chosen, vec![1, 0], "名额够时同组其他成员也不被代表掉");
 
-    // 同结构的两条轮流排在各自组里，不从整张表头开始数
-    let grouped: Vec<Segmentation> = vec![
-        vec!["xi", "lia", "an"],
-        vec!["xi", "lia", "an"],
-        vec!["xi", "li", "a"],
-        vec!["xi", "li", "a"],
-    ]
-    .into_iter()
-    .map(|syllables| Segmentation {
-        syllables: syllables.into_iter().map(Syllable::complete).collect(),
-    })
-    .collect();
-    let order = probe_order(&(0..4).collect::<Vec<usize>>(), &grouped);
-    assert_eq!(order, vec![0, 2, 1, 3], "两个结构轮流：{order:?}");
+    // 真实查询：`#0 an xian an` 与 `#1 an xia nan` 同结构签名 (3, 0)
+    let dictionary = Dictionary::parse(concat!(
+        "安\tan\t9000\n",
+        "现\txian\t9000\n",
+        "下\txia\t9000\n",
+        "南\tnan\t9000\n",
+        "西\txi\t9000\n",
+        "阿\ta\t9000\n",
+        "安下\tan xia\t20000\n",
+        "安西\tan xi\t9000\n",
+    ))
+    .unwrap();
+    let mut engine = Engine::new(dictionary);
+    engine.set_input("anxianan");
+    let query = engine.query().unwrap();
+    let evidence = engine.last_cheap_evidence();
+    let first = evidence
+        .iter()
+        .find(|(index, _, _)| *index == 0)
+        .expect("条 0");
+    let second = evidence
+        .iter()
+        .find(|(index, _, _)| *index == 1)
+        .expect("条 1");
+    assert!(
+        second.1 > first.1,
+        "第 2 条的词法证据要强于第 1 条：{evidence:?}"
+    );
+    let probed = engine.last_probed_segmentations();
+    let zero = probed.iter().position(|index| *index == 0);
+    let one = probed.iter().position(|index| *index == 1);
+    assert!(one.is_some(), "证据更强的第 2 条要拿到名额：{probed:?}");
+    assert!(
+        zero.is_none_or(|zero| one.expect("checked above") < zero),
+        "同结构组里证据更强的第 2 条要排在 parser 靠前的第 1 条之前：{probed:?}"
+    );
+    assert_eq!(
+        query.segmentations[0].to_string(),
+        "an xia nan",
+        "第 2 条靠高频的 `安下` 胜出"
+    );
 }

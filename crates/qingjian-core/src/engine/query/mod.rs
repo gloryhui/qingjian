@@ -8,7 +8,7 @@ mod english_tail;
 mod joint;
 
 #[cfg(test)]
-pub(crate) use joint::probe_order_for_test as probe_order;
+pub(crate) use joint::select_probe_candidates_for_test as select_probe_candidates;
 
 mod result;
 mod snapshot;
@@ -736,10 +736,16 @@ impl Engine {
         self.last_composed_pool.borrow().clone()
     }
 
-    /// 测试用：最近一次查询里跑过探针的切分下标。
+    /// 测试用：最近一次查询里跑过整段探针的切分下标。
     #[cfg(test)]
     pub(crate) fn last_probed_segmentations(&self) -> Vec<usize> {
         self.last_probed_segmentations.borrow().clone()
+    }
+
+    /// 测试用：最近一次查询里每条有资格切分的廉价证据 `(下标, 覆盖率, 强度)`。
+    #[cfg(test)]
+    pub(crate) fn last_cheap_evidence(&self) -> Vec<(usize, f64, f64)> {
+        self.last_cheap_evidence.borrow().clone()
     }
 
     /// 最近一次查询里联合整句搜索的规模（切分数、词格数、路径数、组合候选数）。评测与诊断用。

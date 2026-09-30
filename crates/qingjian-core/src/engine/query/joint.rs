@@ -5,17 +5,21 @@
 //! 旧实现只让 parser 排序靠前的固定两条切分进入整句路径搜索，其余切分哪怕词格和语言模型
 //! 证据明显更强，也没有机会参与竞争——「正确的解释排在第三条」就是死路。
 //!
-//! 现在分两步，预算跟着证据走：
+//! 现在分三步，预算跟着证据走：
 //!
-//! 1. **探针**：每条有资格的切分都在**整段音节**上跑一次「单前驱、不带路线串」的窄搜索，
-//!    拿到它自己的最优完整路径分。探针顺序是**结构轮转**而不是 parser 前缀（见 [`probe_order`]），
-//!    预算按**实际新建的词格数**记（见 [`JOINT_PROBE_SPANS`]），所以「排在第几条」不决定谁拿得到证据。
-//!    这一步复用同一张词格缓存，后面真要展开时不重复查词库。
-//! 2. **按证据分配展开名额**：探针分最高的切分一定展开，parser 首选与结构不同的最佳探针
+//! 1. **廉价证据**（[`cheap_evidence`]）：**每条有资格的切分**都算一份，只用已经排好的词级候选
+//!    `items`（它们是所有切分的词库命中汇总）沿这条切分贪心找最长的可选词往前推，
+//!    零额外词库查询、不看 parser 名次。一个音节串能用更少的词盖住，说明词库更认这条切分。
+//! 2. **选整段探针名额**（[`select_probe_candidates`]）：整段窄搜索（单前驱、不带路线串）是
+//!    真正花钱的一步——每条 9 音节切分约 480 µs 的词格——所以名额有上限
+//!    [`JOINT_PROBE_LIMIT`]。名额按**廉价证据**分配：先给每个采样签名一个代表，再按证据全局
+//!    填满。采样签名只是「音节数 + 不完整音节数」，**不是语义等价类**：同签名的切分照样各自
+//!    带证据参与排序，证据更强的那个才是代表。
+//! 3. **按探针分分配展开名额**：探针分最高的切分一定展开，parser 首选与**音节边界**不同的最佳探针
 //!    作为结构代表保底，其余按探针分从高到低填，直到落后最优探针超过 [`JOINT_PROBE_SLACK`]
 //!    或碰到硬上限 [`JOINT_MAX_SEGMENTATIONS`]。
 //!
-//! 所以决定生死的是「这条切分自己的词格 + 语言模型能给出多好的完整路径」，不是它在 parser
+//! 所以决定生死的是「这条切分自己的词法证据 + 整段词格能给出多好的路径」，不是它在 parser
 //! 输出里的名次；把常数从 2 改成 4 只是顺带的结果，换掉的是选择依据。
 
 use qingjian_dictionary::Dictionary;
@@ -39,13 +43,13 @@ const JOINT_SEGMENTATIONS_FLOOR: usize = 2;
 /// 探针分落后最优探针超过这么多 nat 的切分不再展开：它的宽束搜索要翻盘得补回这么多分。
 const JOINT_PROBE_SLACK: f64 = 6.0;
 
-/// 一次查询最多给几条切分做整段探针。
+/// 一次查询最多给几条切分做**整段**探针。
 ///
-/// 探针唯一真正花掉的是**词格**：每条切分的前后缀不同，格子只能部分共享，
-/// 实测每多探一条 9 音节切分，整串查询多约 480 µs。所以名额是有上限的。
-/// 上限取 [`JOINT_MAX_SEGMENTATIONS`]：探针名额与随后的整段搜索名额同量级，
-/// 超出的切分不是被"砍掉"，而是仍然以**结构代表**身份进 [`plan_joint_segmentations`]，
-/// 在那里用自己的整句路径分参与竞争（见 `probe_order` 的结构轮转）。
+/// 整段探针唯一真正花掉的是**词格**：每条切分的前后缀不同，格子只能部分共享，
+/// 实测每多探一条 9 音节切分，整串查询多约 480 µs。所以名额必须有上限。
+///
+/// 名额给谁由[`cheap_evidence`]决定，不是 parser 名次：第 5 条以后只要词法证据更强，
+/// 照样挤得掉前面的人（见 [`select_probe_candidates`]）。
 const JOINT_PROBE_LIMIT: usize = 4;
 
 /// 一条切分的探针结果：`depth` 个音节上的最优路径。
@@ -97,7 +101,8 @@ impl Engine {
         let dictionaries = self.all_dictionaries();
 
         let spans_before = self.span_cache.borrow().len();
-        let probes = self.probe_segmentations(segmentations, &eligible, &dictionaries, typos);
+        let probes =
+            self.probe_segmentations(segmentations, &eligible, items, &dictionaries, typos);
         let plan = plan_joint_segmentations(&probes, segmentations);
         let mut ranked = Vec::new();
         let mut search: Vec<(usize, Expanded)> = Vec::with_capacity(plan.len());
@@ -183,28 +188,27 @@ impl Engine {
         Some(JointOutcome { winner, generated })
     }
 
-    /// 每条有资格的切分都拿到一份证据，分两段：
-    ///
-    /// 两处刻意的设计：
-    ///
-    /// - **顺序**是 [`probe_order`] 的结构轮转，不是 parser 顺序。同结构的切分在各自组里轮流排到
-    ///   前面，「parser 排第 4 条」不会让它排到后面才拿到证据。
-    /// - **名额**（[`JOINT_PROBE_LIMIT`]）按结构轮转分配，不是取 parser 前几条：结构不同的切分
-    ///   在各自组里都是第一个，第一轮就轮到，「parser 排第 4 条」照样拿得到证据。
-    ///   名额之外的切分不会消失——它们以结构代表身份进 [`plan_joint_segmentations`]。
+    /// 两阶段预算：先给**每条**有资格的切分算一份廉价证据，再把有限的整段探针名额
+    /// 按这份证据分配（见 [`select_probe_candidates`]），最后只对拿到名额的切分跑整段窄搜索。
     ///
     /// 探针用的词格进同一个缓存，整句转换随后直接命中，不重复查词库。
     fn probe_segmentations(
         &self,
         segmentations: &[Segmentation],
         eligible: &[usize],
+        items: &[Candidate],
         dictionaries: &[&Dictionary],
         typos: bool,
     ) -> Vec<Probe> {
-        let order = probe_order(eligible, segmentations);
-        let mut probes = Vec::with_capacity(order.len().min(JOINT_PROBE_LIMIT));
-        let mut probed = Vec::new();
-        for slot in order.into_iter().take(JOINT_PROBE_LIMIT) {
+        let weight = |text: &str| self.learner.weight(text);
+        let evidence: Vec<CheapEvidence> = eligible
+            .iter()
+            .map(|index| cheap_evidence(items, &segmentations[*index], &weight))
+            .collect();
+        let chosen = select_probe_candidates(eligible, segmentations, &evidence, JOINT_PROBE_LIMIT);
+        let mut probes = Vec::with_capacity(chosen.len());
+        let mut probed = Vec::with_capacity(chosen.len());
+        for slot in chosen {
             let index = eligible[slot];
             let depth = segmentations[index].syllables.len();
             probed.push(index);
@@ -216,6 +220,11 @@ impl Engine {
         #[cfg(test)]
         {
             *self.last_probed_segmentations.borrow_mut() = probed;
+            *self.last_cheap_evidence.borrow_mut() = eligible
+                .iter()
+                .zip(&evidence)
+                .map(|(index, evidence)| (*index, evidence.average_word_length, evidence.strength))
+                .collect();
         }
         probes
     }
@@ -407,57 +416,200 @@ fn covers(path: &Conversion, segmentation: &Segmentation) -> bool {
         || (trailing_partial && path.syllables.len() + 1 == segmentation.syllables.len())
 }
 
-/// 探针顺序：按结构签名分组，组内保持 parser 顺序，然后逐轮在各组之间轮转。
+/// 一条切分的**廉价词法证据**：只用已经排好的词级候选 `items`，沿这条切分从第一个音节起
+/// 贪心找最长的可选词往前推。
 ///
-/// 「parser 排第几」不再等于「第几个拿到证据」：结构不同的切分在各自组里都是第一个，
-/// 第一轮就会轮到；同一结构里的多条也只按组内顺序轮流。返回的是 `eligible` 的下标。
-fn probe_order(eligible: &[usize], segmentations: &[Segmentation]) -> Vec<usize> {
-    let mut groups: Vec<(StructureKey, Vec<usize>)> = Vec::new();
-    for (slot, index) in eligible.iter().enumerate() {
-        let key = structure_key(&segmentations[*index]);
-        match groups.iter_mut().find(|(seen, _)| *seen == key) {
-            Some((_, slots)) => slots.push(slot),
-            None => groups.push((key, vec![slot])),
+/// 零额外词库查询，也完全不看 parser 名次：一个音节串能用**更少的词**盖住，说明词库更认这条切分
+/// （`an xi an an` 用 `安溪` + `安安` 两个词盖住，`an xian an` 只能一个字一个字盖）。
+/// 同覆盖率时看强度：用到的词在词级候选里排得越前、用户选过越多，证据越强。
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+struct CheapEvidence {
+    /// 盖住整段时的**平均词长**（音节数）：词库里越认这条切分，能用的词越长、用到的词越少。
+    /// 一个词都没用上就是 0。
+    average_word_length: f64,
+
+    /// 用到的词在词级候选里的强度之和：名次越靠前越大，再加用户选择次数。
+    strength: f64,
+}
+
+impl CheapEvidence {
+    /// 平均词长越长越强；一样长时看强度（`f64` 没有 `Ord`，单独写一个比较）。
+    fn is_stronger_than(&self, other: &Self) -> bool {
+        match self
+            .average_word_length
+            .total_cmp(&other.average_word_length)
+        {
+            std::cmp::Ordering::Greater => true,
+            std::cmp::Ordering::Less => false,
+            std::cmp::Ordering::Equal => self.strength > other.strength,
         }
     }
-    let rounds = groups
+}
+
+/// 沿一条切分在词级候选里贪心最长覆盖。`items` 是所有切分的命中汇总，
+/// 用「音节序列与这条切分从当前位置起完全一致」来认它属于这条切分。
+fn cheap_evidence(
+    items: &[Candidate],
+    segmentation: &Segmentation,
+    weight: &impl Fn(&str) -> u32,
+) -> CheapEvidence {
+    let readings: Vec<&str> = segmentation
+        .syllables
         .iter()
-        .map(|(_, slots)| slots.len())
-        .max()
-        .unwrap_or(0);
-    let mut order = Vec::with_capacity(eligible.len());
-    for round in 0..rounds {
-        for (_, slots) in &groups {
-            if let Some(slot) = slots.get(round) {
-                order.push(*slot);
+        .map(|syllable| syllable.text.as_str())
+        .collect();
+    let total = readings.len();
+    if total == 0 {
+        return CheapEvidence::default();
+    }
+    let mut position = 0;
+    let mut covered = 0;
+    let mut words = 0;
+    let mut strength = 0.0;
+    while position < total {
+        let mut best: Option<(usize, f64)> = None;
+        for (rank, item) in items.iter().enumerate() {
+            if item.kind != CandidateKind::Chinese {
+                continue;
+            }
+            let length = item.syllables.len();
+            if length == 0 || position + length > total {
+                continue;
+            }
+            if item
+                .syllables
+                .iter()
+                .zip(&readings[position..position + length])
+                .any(|(candidate, reading)| candidate != reading)
+            {
+                continue;
+            }
+            // 名次越靠前越强（词级排序已经算进词频、选择次数与上下文分）
+            let score = 1.0 / (rank as f64 + 1.0) + f64::from(weight(&item.text));
+            let better = match best {
+                Some((best_length, best_score)) => {
+                    length > best_length || (length == best_length && score > best_score)
+                }
+                None => true,
+            };
+            if better {
+                best = Some((length, score));
             }
         }
+        match best {
+            Some((length, score)) => {
+                position += length;
+                covered += length;
+                words += 1;
+                strength += score;
+            }
+            // 这个词库在这个位置一个字都没有（罕见的残缺音节）：跳过，不计覆盖率
+            None => position += 1,
+        }
     }
-    order
+    CheapEvidence {
+        average_word_length: if words == 0 {
+            0.0
+        } else {
+            covered as f64 / words as f64
+        },
+        strength,
+    }
 }
 
-/// [`probe_order`] 的测试入口。
-#[cfg(test)]
-pub(crate) fn probe_order_for_test(
+/// 选哪几条切分做整段探针，返回 `eligible` 的下标。
+///
+/// [`SamplingKey`] **只用来采样**（保证不同形状的切分都有机会），不用它判定语义等价：
+/// 同一组里的成员各自带着自己的廉价证据参与排序，证据更强的那个才是这一组的代表。
+/// 第一轮每个结构签名取一个代表（按证据降序，所以组数超过名额时是证据强的组先进），
+/// 第二轮按证据全局填满剩余名额，同组的其他成员这时也能进。
+fn select_probe_candidates(
     eligible: &[usize],
     segmentations: &[Segmentation],
+    evidence: &[CheapEvidence],
+    limit: usize,
 ) -> Vec<usize> {
-    probe_order(eligible, segmentations)
+    if eligible.is_empty() || limit == 0 {
+        return Vec::new();
+    }
+    let mut order: Vec<usize> = (0..eligible.len()).collect();
+    order.sort_by(|left, right| {
+        let stronger = evidence[*right].is_stronger_than(&evidence[*left]);
+        let weaker = evidence[*left].is_stronger_than(&evidence[*right]);
+        if stronger {
+            std::cmp::Ordering::Greater
+        } else if weaker {
+            std::cmp::Ordering::Less
+        } else {
+            eligible[*left].cmp(&eligible[*right])
+        }
+    });
+    let mut chosen: Vec<usize> = Vec::with_capacity(limit);
+    let mut seen: Vec<SamplingKey> = Vec::new();
+    for &slot in &order {
+        if chosen.len() >= limit {
+            return chosen;
+        }
+        let key = sampling_key(&segmentations[eligible[slot]]);
+        if seen.contains(&key) {
+            continue;
+        }
+        seen.push(key);
+        chosen.push(slot);
+    }
+    for &slot in &order {
+        if chosen.len() >= limit {
+            break;
+        }
+        if !chosen.contains(&slot) {
+            chosen.push(slot);
+        }
+    }
+    chosen
 }
 
-/// 切分的结构签名：音节数、不完整音节数、各音节字母数。形状相同的切分在词格上等价。
-type StructureKey = (usize, usize, Vec<usize>);
+/// [`select_probe_candidates`] 的测试入口。
+#[cfg(test)]
+pub(crate) fn select_probe_candidates_for_test(
+    eligible: &[usize],
+    segmentations: &[Segmentation],
+    evidence: &[(f64, f64)],
+    limit: usize,
+) -> Vec<usize> {
+    let evidence: Vec<CheapEvidence> = evidence
+        .iter()
+        .map(|(average_word_length, strength)| CheapEvidence {
+            average_word_length: *average_word_length,
+            strength: *strength,
+        })
+        .collect();
+    select_probe_candidates(eligible, segmentations, &evidence, limit)
+}
 
-fn structure_key(segmentation: &Segmentation) -> StructureKey {
+/// 采样用的结构签名：音节数、不完整音节数。
+///
+/// **只用来采样**（[`select_probe_candidates`] 的第一轮保证每种形状都有机会），
+/// 不是语义等价类：同一个签名下音节边界并不相同（`xi lia …` 与 `xi li a …` 都是 9 个完整音节），
+/// 谁更值得探由各自的[`cheap_evidence`]说了算。
+type SamplingKey = (usize, usize);
+
+fn sampling_key(segmentation: &Segmentation) -> SamplingKey {
     (
         segmentation.syllables.len(),
         segmentation.incomplete_count(),
-        segmentation
-            .syllables
-            .iter()
-            .map(|syllable| syllable.text.len())
-            .collect(),
     )
+}
+
+/// 音节边界签名：各音节的字母数。**这才是「结构不同」的定义**——`dang ao` 与 `dan gao`
+/// 都是 2 个完整音节，但边界不一样，词格也就不同，做结构代表时不能当成同一个。
+type BoundaryKey = Vec<usize>;
+
+fn boundary_key(segmentation: &Segmentation) -> BoundaryKey {
+    segmentation
+        .syllables
+        .iter()
+        .map(|syllable| syllable.text.len())
+        .collect()
 }
 
 /// 按探针分挑出真正要做多路径搜索的切分，返回 `probes` 里的下标（已按探针分降序）。
@@ -487,10 +639,12 @@ fn plan_joint_segmentations(probes: &[Probe], segmentations: &[Segmentation]) ->
     if let Some(position) = probes.iter().position(|probe| probe.index == 0) {
         take(position, &mut chosen);
     }
-    let best_structure = structure_key(&segmentations[probes[order[0]].index]);
+    // 结构代表按**音节边界**选，不按采样用的粗签名：`dang ao` 与 `dan gao` 音节数相同、
+    // 边界不同，是两条真正不同的词格，不能互相代表。
+    let best_boundary = boundary_key(&segmentations[probes[order[0]].index]);
     if let Some(&position) = order
         .iter()
-        .find(|position| structure_key(&segmentations[probes[**position].index]) != best_structure)
+        .find(|position| boundary_key(&segmentations[probes[**position].index]) != best_boundary)
     {
         take(position, &mut chosen);
     }

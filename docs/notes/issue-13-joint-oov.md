@@ -9,37 +9,65 @@
 | Task A | `NOT_FIXED` | `engine/query/joint.rs` 仍有 `const JOINT_SEGMENTATIONS: usize = 2;`，`best_joint_sentence` 先按 parser 顺序取有资格的切分，只把「有整段完整词证据」的那条换到第二位，然后 `.take(JOINT_SEGMENTATIONS)`。第三条及以后永远不做整句路径搜索。 |
 | Task B | `NOT_FIXED` | 候选表里唯一的整句来源是 `plain_sentence_joint` 返回的**一条** `Conversion`；其余路径在 `select_joint_paths` 之后被丢掉，没有任何把「第二条及以后的合理组合路径」放进候选表的通道。产品词库跑 `ye'lang` 得到 `夜郎 / 夜郎自大 / 也 / 耶 / …`，没有 `野狼`。 |
 
-## Task A：按证据分配切分预算（复核后重做）
+## Task A：两阶段预算（复核后重做两轮）
 
 ### 算法
 
-`best_joint_sentence` 分两步：
+`best_joint_sentence` 分三步：
 
-1. **探针**：切分跑一次整段窄搜索（`convert_path_groups(k = 1)`，单前驱、不建路线串），拿到它自己的最优完整路径分。词格进同一张 `SpanCache`，被选中的切分随后做宽搜索时不重复查词库；没有神经重排时探针结果**直接当最终结果复用**。
-2. **按证据分配展开名额**（`plan_joint_segmentations`）：探针分最高的切分先入；parser 首选与「结构签名不同于最优探针的最佳切分」作为保底结构代表各占一名；其余按探针分从高到低填，落后最优探针超过 `JOINT_PROBE_SLACK` = 6 nat 或到 `JOINT_MAX_SEGMENTATIONS` = 4 就停。
+1. **廉价证据**（`cheap_evidence`）：**每条有资格的切分**都算一份，只用已经排好的词级候选 `items`
+   （它们是所有切分的词库命中汇总）沿这条切分从第一个音节起贪心找最长的可选词往前推。
+   零额外词库查询、不看 parser 名次。一个音节串能用更少的词盖住，说明词库更认这条切分：
+   `an xi an an` 用 `安溪` + `安安` 两个词盖住，`an xian an` 只能一个字一个字盖。
+   度量是**平均词长**（覆盖音节数 / 用到的词数），同长度时看强度（词在词级候选里的名次 + 用户选择次数）。
+2. **选整段探针名额**（`select_probe_candidates`）：整段窄搜索（单前驱、不带路线串）是真正花钱的一步
+   ——每条 9 音节切分约 480 µs 的词格——所以名额有上限 `JOINT_PROBE_LIMIT` = 4。
+   第一轮给每个**采样签名**（音节数 + 不完整音节数）一个代表，按廉价证据降序，所以组数超过名额时
+   是证据强的组先进；第二轮按证据全局填满，同组其他成员这时也能进。
+3. **按探针分分配展开名额**（`plan_joint_segmentations`）：探针分最高的切分一定展开；parser 首选与
+   **音节边界**不同的最佳探针作为结构代表各占一名；其余按探针分从高到低填，落后最优探针超过
+   `JOINT_PROBE_SLACK` = 6 nat 或到 `JOINT_MAX_SEGMENTATIONS` = 4 就停。
 
-### 探针名额按结构轮转，不由 parser 前缀顺序决定
+### 为什么不再是「换一个更大的名额常量」
 
-第一版实现按 `eligible` 的 parser 顺序遍历，预算不足就 `break`，等于把「固定只搜前 2 条」换成了「只探 parser 前几条」——后排切分照样拿不到证据。重做后的规则：
+第一版实现按 `eligible` 的 parser 顺序遍历、预算不足就 `break`，等于把「固定只搜前 2 条」换成
+「只探 parser 前几条」。第二版改成结构轮转，但结构签名里含音节长度向量，同一输入下长度向量唯一
+确定切分，**每组只有一个成员**，轮转退化成 parser 顺序，第 5 条以后照样拿不到名额。
 
-- **顺序**（`probe_order`）：按结构签名（音节数、不完整音节数、各音节字母数）分组，组内保持 parser 顺序，然后逐轮在各组之间轮转。结构不同的切分在各自组里都是第一个，第一轮就轮到；「parser 排第 4 条」不会让它排到后面才拿到证据。
-- **名额**（`JOINT_PROBE_LIMIT` = 4）：探针唯一真正花掉的是词格，每条 9 音节切分约 480 µs，所以名额有上限。名额之外的切分不会消失——它们仍以**结构代表**身份进 `plan_joint_segmentations`，在那里用自己的整句路径分参与竞争。
+现在决定名额的是**每条切分自己的词法证据**：
 
-确定性回归 `engine/tests/joint/dynamic_budget.rs::fourth_parser_segmentation_still_gets_evidence_and_wins`：输入 `xiliaxinixiaanxianan` 的 parser 第 4 条切分 `xi lia xi ni xia an xi a nan` 才是对的，而它落在旧策略的射程之外（旧预算按 `lattice_spans` 记：前三条各要 36/36/44 个词格，128 在第三条之后只剩 12，第 4 条直接被 `break` 掉）。测试断言 `last_probed_segmentations()` 含下标 3、最终首选 `西俩西尼下安西阿南`、获胜切分就是第 4 条。同文件 `probe_order_rotates_structures_instead_of_walking_parser_order` 单测轮转顺序本身。
+- 证据对**全部**有资格的切分都算，不经过任何截断，所以「第 5 条以后」不会提前出局。
+- 名额按证据排序分配，与 parser 名次无关。
+- `SamplingKey`（音节数 + 不完整音节数）**只用来采样**，不是语义等价类：同签名的成员各自带证据
+  参与排序，证据更强的那个才是代表（`same_structure_key_does_not_make_two_segmentations_semantically_equal`）。
+- 结构代表名额用**音节边界**（`BoundaryKey` = 各音节字母数）判定，不用采样签名：
+  `dang ao` 与 `dan gao` 都是 2 个完整音节但边界不同，是两条真正不同的词格，不能互相代表。
+
+### 回归（`engine/tests/joint/dynamic_budget.rs`）
+
+- `a_late_segmentation_wins_a_probe_slot_on_cheap_evidence`（**RED→GREEN**）：输入
+  `xiliaxinixiaanxianan` 有 8 条完整切分，正确的 `xi li a xi ni xia an xian an` 在 **parser 第 7 条**。
+  词级候选里 `西里阿`（第 7、8 条的前缀）让它能用 3 + 1 个词盖住 9 个音节里的 4 个（平均词长 2.0），
+  比前面各条的 1.5 / 1.33 都长。断言：廉价证据覆盖全部 8 条且第 7 条不弱于任何前面的切分、
+  它拿到整段探针名额并排在第一位、最终首选 `西里阿西尼下安现安`、获胜切分就是第 7 条。
+  旧实现（按 parser 顺序拿名额）下前 4 条是 `#0..#3`，第 7 条连整段探针都跑不到，测试失败。
+- `same_structure_key_does_not_make_two_segmentations_semantically_equal`（**RED→GREEN**）：
+  纯选择逻辑部分断言名额只够一个时同采样签名组里证据更强的那个才是代表、名额够时同组其他成员也不被
+  代表掉；真实查询部分用 `anxianan`，`#0 an xian an` 与 `#1 an xia nan` 同签名 `(3, 0)`，
+  词级候选里 `安下`（`#1` 的前缀）存在、`安现`（`#0` 的前缀）不存在，于是 `#1` 平均词长 2.0、
+  `#0` 只有 1.0。断言 `#1` 拿到名额、排在 parser 靠前的 `#0` 之前、并最终胜出。
+- 两个都是真正的 RED→GREEN：把 `select_probe_candidates` 换回「按 parser 顺序取前 limit 条」后
+  两条都失败（已实测）。
+- 另有 `parser_keeps_three_complete_segmentations_with_the_target_last`、
+  `third_segmentation_wins_the_joint_search`、神经开 / 关、显式 `'` 硬边界、个人 n-gram 抬预算、
+  双拼只解出一条切分等既有用例。
 
 ### 有界性
 
-- 切分条数上限 `JOINT_MAX_SEGMENTATIONS` = 4（搜索）、`JOINT_PROBE_LIMIT` = 4（探针）。
+- 整段探针条数上限 `JOINT_PROBE_LIMIT` = 4；展开条数上限 `JOINT_MAX_SEGMENTATIONS` = 4。
+- 廉价证据是零词库查询的纯内存扫描（`items` ≤ 500 条 × 音节数），对**全部**有资格切分都算。
 - 没有扩大 `BEAM_WIDTH`（仍 8）、没有扩大 `RESCORE_PATHS`（仍 6）、没有同步等待神经模型。
 
-### 回归
-
-`engine/tests/joint/dynamic_budget.rs`：
-
-- `parser_keeps_three_complete_segmentations_with_the_target_last`：`anxianan` 的前三条完整切分依次是 `an xian an`、`an xia nan`、`an xi an an`。
-- `the_target_text_is_unreachable_on_the_first_two_segmentations`：直接在前两条切分的词格上跑 `convert_paths`，都造不出 `安溪安安`——旧实现不搜索第三条就永远拿不到它。
-- `third_segmentation_wins_the_joint_search`：新实现首选 `安溪安安`，`Query.segmentations[0]` 与 `marked_text()` 都是 `an'xi'an'an`。
-- 另有神经开 / 关、模型反对时仍进重排池、显式 `'` 是硬边界、个人 n-gram 把落后切分抬进预算、无个人证据时静态模型仍然说了算、双拼只解出一条切分等用例。
 
 ## Task B：未登录组合候选（复核后重做）
 
@@ -133,16 +161,18 @@ cargo run -p qingjian-cli --release --example joint_bench -- --dict assets/lexic
 
 | 指标 | 基线 `9f1e817` | 本分支 |
 | --- | ---: | ---: |
-| 整串稳态 · 中位数 | 341.5 µs | **327.2 µs（−4%）** |
-| 整串稳态 · P95 | 891.0 µs | 1552.0 µs（+74%） |
-| 整串稳态 · 最大 | 918.2 µs | 1843.5 µs |
-| 逐键冷缓存 · 中位数 / P95 | 302.5 / 1458.0 µs | 329.7 / 1589.9 µs（+9% / +9%） |
-| 逐键热缓存 · 中位数 / P95 | 301.7 / 1422.0 µs | 319.0 / 1590.2 µs（+6% / +12%） |
-| 逐键热缓存 · 最大 | 2447.4 µs | 2573.7 µs |
+| 整串稳态 · 中位数 | 340.7 µs | **344.3 µs（+1%）** |
+| 整串稳态 · P95 | 877.2 µs | 1565.4 µs（+78%） |
+| 整串稳态 · 最大 | 916.2 µs | 1613.7 µs |
+| 逐键冷缓存 · 中位数 / P95 | 306.5 / 1425.9 µs | 339.9 / 1646.2 µs（+11% / +15%） |
+| 逐键热缓存 · 中位数 / P95 | 302.7 / 1433.8 µs | 339.2 / 1661.2 µs（+12% / +16%） |
+| 逐键热缓存 · 最大 | 2355.3 µs | 2678.1 µs |
 
-单条输入稳态（新 / 基线）：`nihao` 320/345、`keneng` 337/341、`fangan` 469/500、`wan'dou'bu'xiang'wan` 273/267、`ye'lang` **111**/79（组合候选；两段式建对象后从 431 µs 降下来）、**`wojintianxiangyaoquxuexiao`（9 音节）1546/881 µs**。
+单条输入稳态（新 / 基线）：`nihao` 324/341、`keneng` 353/340、`fangan` 477/497、`wan'dou'bu'xiang'wan` 277/263、`ye'lang` **112**/78、**`wojintianxiangyaoquxuexiao`（9 音节）1561/869 µs**。
 
-P95 与最长输入的回退全部来自**探针**：这条输入有 8 条 parser 切分、7 条有资格，基线搜索 2 条，本分支探 4 条（`JOINT_PROBE_LIMIT`）再展开 2 条。实测每多探一条 9 音节切分约 +480 µs——探针唯一真正花掉的是词格，而不同切分的前后缀不同、只能部分共享。这是「后排切分必须拿得到证据」的直接代价。已经收过的部分：`BEAM_WIDTH` 与 `RESCORE_PATHS` 不动；`span_candidates` 从「全排一遍再截断」改成 `select_nth_unstable` 部分排序后只排前几个；没有神经重排时探针结果直接复用（不跑第二遍）；组合候选两段式（先算分、只给前 24 个配对建对象）。
+P95 与最长输入的回退全部来自**整段探针**：这条输入有 8 条 parser 切分、7 条有资格，基线搜索 2 条，本分支探 4 条（`JOINT_PROBE_LIMIT`）再展开 2 条。实测每多探一条 9 音节切分约 +480 µs——探针唯一真正花掉的是词格，而不同切分的前后缀不同、只能部分共享。这是「后排切分必须拿得到证据」的直接代价，不可通过分身额上限抹掉。廉价证据这一层是零词库查询的纯内存扫描，额外开销在噪声范围内。
+
+已经收过的部分：`BEAM_WIDTH` 与 `RESCORE_PATHS` 不动；`span_candidates` 从「全排一遍再截断」改成 `select_nth_unstable` 部分排序后只排前几个；没有神经重排时探针结果直接复用（不跑第二遍）；组合候选两段式（先算分、只给前 24 个配对建对象）。
 
 共现索引是懒建的，只在真的需要排序加成时才建；`set_extra_dictionaries` 会让它失效重建。
 
@@ -155,10 +185,10 @@ P95 与最长输入的回退全部来自**探针**：这条输入有 8 条 parse
 | --- | ---: | ---: |
 | 首选准确率 | 26.5% | 26.5% |
 | 整句候选命中 | 26.5% | 26.5% |
-| 字准确率 | 71.5% | **71.8%** |
-| 平均 / 最慢查询 | 1.2 / 5.4 ms | 1.8 / 12.1 ms |
+| 字准确率 | 71.5% | **72.0%** |
+| 平均 / 最慢查询 | 1.2 / 5.6 ms | 1.8 / 11.1 ms |
 
-字数取「第一个字数与原句相等的候选」。第一版实现（共现当硬门槛）是 71.6%，去掉硬门槛、改成「常用完整词门槛 + 共现只排序」之后回到 71.8%，比基线高 0.3pp。
+字数取「第一个字数与原句相等的候选」。这一轮从 71.8% 再升到 72.0%：切分探针名额改由廉价词法证据分配，尾巴上的切分不再因为 parser 名次被提前淘汰。
 
 关键正例两版一致：`keneng`/`ke'neng` → `可能`，`wan'dou'bu'xiang'wan` → `玩都不想玩`（无神经时基线也是），`ping'guo'bu'xiang'chi` → `苹果不想吃`，`jin'tian'bu'xiang'wan` → `今天不想玩`，`kan'dou'bu'xiang'kan` → `看都不想看`，`mai'dou'bu'xiang'mai` → `买都不想买`。`zuo'zhen` 的首选是词库里的 `坐镇`（`坐诊` 是 `DICTIONARY_GAP`）。
 

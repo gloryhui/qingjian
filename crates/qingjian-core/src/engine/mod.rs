@@ -230,9 +230,13 @@ pub struct Engine {
     #[cfg(test)]
     last_composed_pool: std::cell::RefCell<Vec<String>>,
 
-    /// 测试用：最近一次查询里真的跑过探针的切分下标（`segmentations` 里第几条）。
+    /// 测试用：最近一次查询里真的跑过整段探针的切分下标（`segmentations` 里第几条）。
     #[cfg(test)]
     last_probed_segmentations: std::cell::RefCell<Vec<usize>>,
+
+    /// 测试用：最近一次查询里每条有资格切分的廉价证据 `(下标, 覆盖率, 强度)`。
+    #[cfg(test)]
+    last_cheap_evidence: std::cell::RefCell<Vec<(usize, f64, f64)>>,
 
     /// 本次会话经我们上屏的文本，应用不给上下文时用它联想。
     history: InputHistory,
@@ -419,6 +423,8 @@ impl Engine {
             last_composed_pool: std::cell::RefCell::new(Vec::new()),
             #[cfg(test)]
             last_probed_segmentations: std::cell::RefCell::new(Vec::new()),
+            #[cfg(test)]
+            last_cheap_evidence: std::cell::RefCell::new(Vec::new()),
             recent_commits: Vec::new(),
             logger: input_log::MutedLogger::new(Box::new(NoInputLogger)),
             private: false,
