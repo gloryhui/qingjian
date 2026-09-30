@@ -35,12 +35,14 @@ fn unlearned_static_split_does_not_take_first_place_from_a_complete_word() {
     engine.set_input("dangao");
     let query = engine.query().unwrap();
     assert_eq!(query.candidates.items[0].text, "蛋糕");
-    assert!(
+    // 当奥 是合法拆读（本分支起不再被「没有共现证据」挡掉），但不能越过完整词
+    assert_ne!(
         query
             .candidates
             .items
             .iter()
-            .all(|candidate| candidate.text != "当奥")
+            .position(|candidate| candidate.text == "当奥"),
+        Some(0)
     );
 }
 
@@ -53,12 +55,14 @@ fn shuangpin_complete_word_protection_uses_decoded_reading() {
 
     let query = engine.query().unwrap();
     assert_eq!(query.candidates.items[0].text, "蛋糕");
-    assert!(
+    // 当奥 是合法拆读（本分支起不再被「没有共现证据」挡掉），但不能越过完整词
+    assert_ne!(
         query
             .candidates
             .items
             .iter()
-            .all(|candidate| candidate.text != "当奥")
+            .position(|candidate| candidate.text == "当奥"),
+        Some(0)
     );
 }
 

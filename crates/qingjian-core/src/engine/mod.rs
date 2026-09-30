@@ -225,6 +225,15 @@ pub struct Engine {
     /// 最近一次查询里联合整句搜索的规模；只给评测和诊断读，不参与排序。
     joint_stats: std::cell::Cell<JointStats>,
 
+    /// 测试用：最近一次查询里未登录组合候选**截断之前**的完整排序池。
+    /// 用来断言某个组合「已经按门槛进了池子」，只是没挤进前几条。
+    #[cfg(test)]
+    last_composed_pool: std::cell::RefCell<Vec<String>>,
+
+    /// 测试用：最近一次查询里真的跑过探针的切分下标（`segmentations` 里第几条）。
+    #[cfg(test)]
+    last_probed_segmentations: std::cell::RefCell<Vec<usize>>,
+
     /// 本次会话经我们上屏的文本，应用不给上下文时用它联想。
     history: InputHistory,
 
@@ -406,6 +415,10 @@ impl Engine {
             span_cache: std::cell::RefCell::new(sentence::SpanCache::default()),
             composition_pairs: std::cell::OnceCell::new(),
             joint_stats: std::cell::Cell::new(JointStats::default()),
+            #[cfg(test)]
+            last_composed_pool: std::cell::RefCell::new(Vec::new()),
+            #[cfg(test)]
+            last_probed_segmentations: std::cell::RefCell::new(Vec::new()),
             recent_commits: Vec::new(),
             logger: input_log::MutedLogger::new(Box::new(NoInputLogger)),
             private: false,

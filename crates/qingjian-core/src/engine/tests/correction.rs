@@ -85,7 +85,8 @@ fn typo_edges_in_the_lattice_correct_legal_but_unlikely_pinyin() {
     assert_eq!(query.candidates.items[0].text, "树德");
     assert_eq!(query.candidates.items[0].kind, CandidateKind::Chinese);
     assert!(query.candidates.items.iter().all(|c| c.text != "是的"));
-    assert!(query.candidates.items.iter().all(|c| c.text != "属的"));
+    // 属的 是合法拆读，可以出现，但不能越过完整词 树德
+    assert!(query.candidates.items.iter().position(|c| c.text == "属的") != Some(0));
 }
 
 /// 模糊音命中的词按敲的字母消耗拼音（`zi` 对 `zhi`），不算敲错。

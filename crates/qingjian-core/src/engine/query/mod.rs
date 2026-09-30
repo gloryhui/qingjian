@@ -6,6 +6,10 @@ mod code;
 mod composed;
 mod english_tail;
 mod joint;
+
+#[cfg(test)]
+pub(crate) use joint::probe_order_for_test as probe_order;
+
 mod result;
 mod snapshot;
 
@@ -724,6 +728,18 @@ impl Engine {
             }
         }
         expanded
+    }
+
+    /// 测试用：最近一次查询里未登录组合候选截断之前的完整排序池。
+    #[cfg(test)]
+    pub(crate) fn last_composed_pool(&self) -> Vec<String> {
+        self.last_composed_pool.borrow().clone()
+    }
+
+    /// 测试用：最近一次查询里跑过探针的切分下标。
+    #[cfg(test)]
+    pub(crate) fn last_probed_segmentations(&self) -> Vec<usize> {
+        self.last_probed_segmentations.borrow().clone()
     }
 
     /// 最近一次查询里联合整句搜索的规模（切分数、词格数、路径数、组合候选数）。评测与诊断用。

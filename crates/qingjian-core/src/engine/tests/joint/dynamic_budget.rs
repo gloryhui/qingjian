@@ -6,6 +6,7 @@
 //! 唯一能取胜的依据就是词路径 + 语言模型。
 
 use super::*;
+use crate::parser::Syllable;
 use crate::sentence::{LanguageModel, Personal, SpanCache};
 
 /// 只给第三条切分的词路径提供接续证据。
@@ -221,4 +222,105 @@ fn shuangpin_decodes_to_a_single_segmentation_and_keeps_the_word() {
     let query = engine.query().unwrap();
     assert_eq!(query.candidates.items[0].text, "蛋糕");
     assert_eq!(engine.last_joint_stats().parser_segmentations, 1);
+}
+
+/// parser 第 4 条切分才是对的，而且它落在旧的「按 parser 顺序消费探针预算」的射程之外：
+/// 8 条有资格切分的前三条各要 36 / 36 / 44 个词格，旧预算 128 在第三条之后只剩 12，
+/// 第 4 条（也是 44）直接被 `break` 掉，连探针都跑不到。
+const FOURTH_SEGMENTATION_INPUT: &str = "xiliaxinixiaanxianan";
+
+/// 只有第 4 条切分 `xi lia xi ni xia an xi a nan` 能在末尾拼出 `西阿南`（三音节跨度），
+/// 其余切分的同一段是 `xian an` / `xia nan` / `xi an an`，都没有这个词。整段没有完整词，
+/// 所以赢不了「整段完整词」这条捷径。
+fn fourth_segmentation_dictionary() -> Dictionary {
+    Dictionary::parse(concat!(
+        "西\txi\t9000\n",
+        "俩\tlia\t5000\n",
+        "尼\tni\t6000\n",
+        "下\txia\t9000\n",
+        "安\tan\t9000\n",
+        "南\tnan\t9000\n",
+        "现\txian\t7000\n",
+        "阿\ta\t1000\n",
+        "西俩\txi lia\t8000\n",
+        "西尼\txi ni\t8000\n",
+        "下安\txia an\t8000\n",
+        "西阿南\txi a nan\t9000\n",
+        "现安\txian an\t1000\n",
+        "下南\txia nan\t1000\n",
+        "西安\txi an\t1000\n",
+    ))
+    .unwrap()
+}
+
+#[test]
+fn fourth_parser_segmentation_still_gets_evidence_and_wins() {
+    let segmentations = parser::segment(FOURTH_SEGMENTATION_INPUT).unwrap();
+    assert_eq!(segmentations[0].to_string(), "xi lia xi ni xia an xian an");
+    assert_eq!(segmentations[1].to_string(), "xi lia xi ni xia an xia nan");
+    assert_eq!(segmentations[2].to_string(), "xi lia xi ni xia an xi an an");
+    assert_eq!(
+        segmentations[3].to_string(),
+        "xi lia xi ni xia an xi a nan",
+        "第 4 条才是对的"
+    );
+    // 没有整段完整词：赢不了捷径
+    let mut engine = Engine::new(fourth_segmentation_dictionary());
+    engine.set_input(FOURTH_SEGMENTATION_INPUT);
+    let query = engine.query().unwrap();
+    let stats = engine.last_joint_stats();
+    assert_eq!(stats.eligible_segmentations, 8);
+    // 第 4 条（下标 3）必须拿到探针证据：它排在 parser 名次的后半，旧的"按 parser 顺序消费预算"
+    // 在它之前就把预算花光了。探针名额按结构轮转分配，每个结构第一轮各拿一个，所以它进得来。
+    let probed = engine.last_probed_segmentations();
+    assert!(
+        probed.contains(&3),
+        "第 4 条切分必须拿到探针证据，不能因为 parser 位置被饿死：{probed:?}"
+    );
+    assert_eq!(
+        query.candidates.items[0].text, "西俩西尼下安西阿南",
+        "第 4 条切分靠句尾那个只有它拼得出的三音节词胜出"
+    );
+    assert_eq!(
+        query.segmentations[0].to_string(),
+        "xi lia xi ni xia an xi a nan"
+    );
+}
+
+/// 探针顺序按结构轮转：parser 名次不决定谁先拿到证据。
+#[test]
+fn probe_order_rotates_structures_instead_of_walking_parser_order() {
+    use crate::engine::query::probe_order;
+    // 八条切分八个不同结构（每条的两个尾巴音节长度都不一样），轮转后第一轮就是全体：
+    // 结构不同的切分在各自组里都是第一个，"parser 排第 4 条"照样第一轮拿到证据。
+    let segmentations: Vec<Segmentation> = (0..8)
+        .map(|index| {
+            let mut syllables = vec![Syllable::complete("xi"), Syllable::complete("lia")];
+            for tail in 0..=index {
+                syllables.push(Syllable::complete(if tail % 2 == 0 { "an" } else { "nan" }));
+            }
+            Segmentation { syllables }
+        })
+        .collect();
+    let eligible: Vec<usize> = (0..segmentations.len()).collect();
+    let order = probe_order(&eligible, &segmentations);
+    assert_eq!(
+        order, eligible,
+        "每个结构各一条时第一轮就是全体，不看 parser 前缀"
+    );
+
+    // 同结构的两条轮流排在各自组里，不从整张表头开始数
+    let grouped: Vec<Segmentation> = vec![
+        vec!["xi", "lia", "an"],
+        vec!["xi", "lia", "an"],
+        vec!["xi", "li", "a"],
+        vec!["xi", "li", "a"],
+    ]
+    .into_iter()
+    .map(|syllables| Segmentation {
+        syllables: syllables.into_iter().map(Syllable::complete).collect(),
+    })
+    .collect();
+    let order = probe_order(&(0..4).collect::<Vec<usize>>(), &grouped);
+    assert_eq!(order, vec![0, 2, 1, 3], "两个结构轮流：{order:?}");
 }

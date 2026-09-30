@@ -7,10 +7,11 @@
 //!
 //! 现在分两步，预算跟着证据走：
 //!
-//! 1. **探针**：每条有资格的切分先跑一次「单前驱、不带路线串」的窄搜索，拿到它自己的最优路径分。
-//!    这一步复用同一张词格缓存，后面真要展开时不会重复查词库。探针总量由
-//!    [`JOINT_PROBE_SPANS`] 兜住，长输入不会因为切分多而线性变慢。
-//! 2. **按证据分配展开名额**：探针分最高的切分一定展开，parser 首选与「音节数不同的最佳探针」
+//! 1. **探针**：每条有资格的切分都在**整段音节**上跑一次「单前驱、不带路线串」的窄搜索，
+//!    拿到它自己的最优完整路径分。探针顺序是**结构轮转**而不是 parser 前缀（见 [`probe_order`]），
+//!    预算按**实际新建的词格数**记（见 [`JOINT_PROBE_SPANS`]），所以「排在第几条」不决定谁拿得到证据。
+//!    这一步复用同一张词格缓存，后面真要展开时不重复查词库。
+//! 2. **按证据分配展开名额**：探针分最高的切分一定展开，parser 首选与结构不同的最佳探针
 //!    作为结构代表保底，其余按探针分从高到低填，直到落后最优探针超过 [`JOINT_PROBE_SLACK`]
 //!    或碰到硬上限 [`JOINT_MAX_SEGMENTATIONS`]。
 //!
@@ -38,10 +39,21 @@ const JOINT_SEGMENTATIONS_FLOOR: usize = 2;
 /// 探针分落后最优探针超过这么多 nat 的切分不再展开：它的宽束搜索要翻盘得补回这么多分。
 const JOINT_PROBE_SLACK: f64 = 6.0;
 
-/// 一次查询里探针最多摊开多少个词格。四个音节左右的短输入每条切分才十来个格子，
-/// 四条有资格切分都能覆盖到；九音节以上的长句按这个上限收敛到两条，探针代价不随切分条数线性膨胀。
-/// 词格本来就要为真正展开的切分算，探针只是让它们提前算，代价是「多探的那几条」。
-const JOINT_PROBE_SPANS: usize = 128;
+/// 一次查询最多给几条切分做整段探针。
+///
+/// 探针唯一真正花掉的是**词格**：每条切分的前后缀不同，格子只能部分共享，
+/// 实测每多探一条 9 音节切分，整串查询多约 480 µs。所以名额是有上限的。
+/// 上限取 [`JOINT_MAX_SEGMENTATIONS`]：探针名额与随后的整段搜索名额同量级，
+/// 超出的切分不是被"砍掉"，而是仍然以**结构代表**身份进 [`plan_joint_segmentations`]，
+/// 在那里用自己的整句路径分参与竞争（见 `probe_order` 的结构轮转）。
+const JOINT_PROBE_LIMIT: usize = 4;
+
+/// 一条切分的探针结果：`depth` 个音节上的最优路径。
+struct Probe {
+    index: usize,
+    depth: usize,
+    best: Conversion,
+}
 
 /// 一次联合搜索的结果。
 pub(super) struct JointOutcome {
@@ -90,12 +102,19 @@ impl Engine {
         let mut ranked = Vec::new();
         let mut search: Vec<(usize, Expanded)> = Vec::with_capacity(plan.len());
         for position in plan {
-            let (index, probe) = &probes[position];
-            let (index, segmentation) = (*index, &segmentations[*index]);
+            let probe = &probes[position];
+            let index = probe.index;
+            let segmentation = &segmentations[index];
             let expanded = self.expand_positions(&segmentation.patterns(), typos);
             if k == 1 {
-                // 探针跑的就是同一条窄搜索，结果直接复用，不再跑第二遍
-                ranked.push((index, probe.clone()));
+                // 探针在整段上跑的就是同一条窄搜索，结果直接复用，不再跑第二遍；
+                // 只探了前缀（长输入）时前缀路径不是整句，扔掉重跑。
+                if probe.depth >= segmentation.syllables.len() && covers(&probe.best, segmentation)
+                {
+                    ranked.push((index, probe.best.clone()));
+                } else if let Some(path) = self.full_path(segmentation, &expanded, &dictionaries) {
+                    ranked.push((index, path));
+                }
             } else {
                 let groups = sentence::convert_path_groups(
                     &dictionaries,
@@ -130,19 +149,14 @@ impl Engine {
             return None;
         }
         let typed = segmentations[0].joined("");
-        // 组合候选的门槛按**重排前**的路径分比：它自己的分也是重排前的，
-        // 拿重排后的最优分当参照会把两者放在不同尺度上。
-        let best_score = ranked
-            .iter()
-            .map(|(_, path)| path.score)
-            .max_by(f64::total_cmp)
-            .expect("nonempty path pool");
         ranked.sort_by(|a, b| {
             b.1.score
                 .total_cmp(&a.1.score)
                 .then_with(|| a.1.text.cmp(&b.1.text))
                 .then_with(|| a.0.cmp(&b.0))
         });
+        // 组合候选的门槛要看**重排前**的最优路径：先留一份，`k == 1` 时它会被 `remove` 掉
+        let best = ranked[0].1.clone();
         let winner = if k == 1 {
             ranked.remove(0)
         } else {
@@ -161,7 +175,7 @@ impl Engine {
             selected.sort_by(|left, right| right.1.score.total_cmp(&left.1.score));
             selected.into_iter().next().expect("nonempty selection")
         };
-        let generated = self.composed_candidates(&search, segmentations, items, &typed, best_score);
+        let generated = self.composed_candidates(&search, segmentations, items, &typed, &best);
         self.joint_stats.set(JointStats {
             generated_candidates: generated.len(),
             ..self.joint_stats.get()
@@ -169,50 +183,101 @@ impl Engine {
         Some(JointOutcome { winner, generated })
     }
 
-    /// 每条有资格的切分先跑一次窄搜索（单前驱、无路线串）拿最优路径，作为它进入完整搜索的证据。
-    /// 探针用的词格会进同一个缓存，选中的切分随后做宽搜索时不重复查词库；只用一条路径时
-    /// （没有神经重排）探针结果就是最终结果，不再跑第二遍。
+    /// 每条有资格的切分都拿到一份证据，分两段：
+    ///
+    /// 两处刻意的设计：
+    ///
+    /// - **顺序**是 [`probe_order`] 的结构轮转，不是 parser 顺序。同结构的切分在各自组里轮流排到
+    ///   前面，「parser 排第 4 条」不会让它排到后面才拿到证据。
+    /// - **名额**（[`JOINT_PROBE_LIMIT`]）按结构轮转分配，不是取 parser 前几条：结构不同的切分
+    ///   在各自组里都是第一个，第一轮就轮到，「parser 排第 4 条」照样拿得到证据。
+    ///   名额之外的切分不会消失——它们以结构代表身份进 [`plan_joint_segmentations`]。
+    ///
+    /// 探针用的词格进同一个缓存，整句转换随后直接命中，不重复查词库。
     fn probe_segmentations(
         &self,
         segmentations: &[Segmentation],
         eligible: &[usize],
         dictionaries: &[&Dictionary],
         typos: bool,
-    ) -> Vec<(usize, Conversion)> {
-        let mut probes = Vec::with_capacity(eligible.len());
-        let mut budget = JOINT_PROBE_SPANS;
-        for index in eligible {
-            let segmentation = &segmentations[*index];
-            let cost = lattice_spans(segmentation.syllables.len());
-            if !probes.is_empty() && cost > budget {
-                break;
-            }
-            budget = budget.saturating_sub(cost);
-            let expanded = self.expand_positions(&segmentation.patterns(), typos);
-            let groups = sentence::convert_path_groups(
-                dictionaries,
-                &expanded.positions(),
-                false,
-                1,
-                &*self.language_model,
-                self.personal(),
-                |text| self.learner.weight(text),
-                |position, syllable| expanded.cost(position, syllable),
-                &mut self.span_cache.borrow_mut(),
-            );
-            // 组内第一条就是这条路线的最高分路径（节点已按分数降序）
-            let Some(path) = groups
-                .into_iter()
-                .next()
-                .and_then(|group| group.into_iter().next())
-            else {
-                continue;
-            };
-            if covers(&path, segmentation) {
-                probes.push((*index, path));
+    ) -> Vec<Probe> {
+        let order = probe_order(eligible, segmentations);
+        let mut probes = Vec::with_capacity(order.len().min(JOINT_PROBE_LIMIT));
+        let mut probed = Vec::new();
+        for slot in order.into_iter().take(JOINT_PROBE_LIMIT) {
+            let index = eligible[slot];
+            let depth = segmentations[index].syllables.len();
+            probed.push(index);
+            if let Some(probe) = self.probe_prefix(segmentations, index, depth, dictionaries, typos)
+            {
+                probes.push(probe);
             }
         }
+        #[cfg(test)]
+        {
+            *self.last_probed_segmentations.borrow_mut() = probed;
+        }
         probes
+    }
+
+    /// 一条切分前 `depth` 个音节上的最优路径。跨度缓存与整句转换共用，加深时只多算新的一层。
+    fn probe_prefix(
+        &self,
+        segmentations: &[Segmentation],
+        index: usize,
+        depth: usize,
+        dictionaries: &[&Dictionary],
+        typos: bool,
+    ) -> Option<Probe> {
+        let segmentation = &segmentations[index];
+        let expanded = self.expand_positions(&segmentation.patterns(), typos);
+        let positions = expanded.positions();
+        let depth = depth.min(sentence::effective_len(&positions, false));
+        if depth == 0 {
+            return None;
+        }
+        let groups = sentence::convert_path_groups(
+            dictionaries,
+            &positions[..depth],
+            false,
+            1,
+            &*self.language_model,
+            self.personal(),
+            |text| self.learner.weight(text),
+            |position, syllable| expanded.cost(position, syllable),
+            &mut self.span_cache.borrow_mut(),
+        );
+        // 组内第一条就是这条路线的最高分路径（节点已按分数降序）
+        let best = groups
+            .into_iter()
+            .next()
+            .and_then(|group| group.into_iter().next())?;
+        Some(Probe { index, depth, best })
+    }
+
+    /// 在整段音节上重跑一次窄搜索，拿覆盖全部音节的路径（前缀探针不够用时用）。
+    fn full_path(
+        &self,
+        segmentation: &Segmentation,
+        expanded: &Expanded,
+        dictionaries: &[&Dictionary],
+    ) -> Option<Conversion> {
+        let groups = sentence::convert_path_groups(
+            dictionaries,
+            &expanded.positions(),
+            false,
+            1,
+            &*self.language_model,
+            self.personal(),
+            |text| self.learner.weight(text),
+            |position, syllable| expanded.cost(position, syllable),
+            &mut self.span_cache.borrow_mut(),
+        );
+        groups
+            .into_iter()
+            .next()
+            .and_then(|group| group.into_iter().next())
+            .filter(|path| covers(path, segmentation))
     }
 
     /// 整句胜出的切分成为 preedit 的首选切分；完整词由已有词级候选承载。
@@ -342,32 +407,75 @@ fn covers(path: &Conversion, segmentation: &Segmentation) -> bool {
         || (trailing_partial && path.syllables.len() + 1 == segmentation.syllables.len())
 }
 
-/// 一条切分在词图上最多个跨度：每个起点最多 [`sentence::MAX_WORD_SYLLABLES`] 个长度。探针预算按它算。
-fn lattice_spans(syllables: usize) -> usize {
-    (0..syllables)
-        .map(|start| (syllables - start).min(sentence::MAX_WORD_SYLLABLES))
-        .sum()
+/// 探针顺序：按结构签名分组，组内保持 parser 顺序，然后逐轮在各组之间轮转。
+///
+/// 「parser 排第几」不再等于「第几个拿到证据」：结构不同的切分在各自组里都是第一个，
+/// 第一轮就会轮到；同一结构里的多条也只按组内顺序轮流。返回的是 `eligible` 的下标。
+fn probe_order(eligible: &[usize], segmentations: &[Segmentation]) -> Vec<usize> {
+    let mut groups: Vec<(StructureKey, Vec<usize>)> = Vec::new();
+    for (slot, index) in eligible.iter().enumerate() {
+        let key = structure_key(&segmentations[*index]);
+        match groups.iter_mut().find(|(seen, _)| *seen == key) {
+            Some((_, slots)) => slots.push(slot),
+            None => groups.push((key, vec![slot])),
+        }
+    }
+    let rounds = groups
+        .iter()
+        .map(|(_, slots)| slots.len())
+        .max()
+        .unwrap_or(0);
+    let mut order = Vec::with_capacity(eligible.len());
+    for round in 0..rounds {
+        for (_, slots) in &groups {
+            if let Some(slot) = slots.get(round) {
+                order.push(*slot);
+            }
+        }
+    }
+    order
+}
+
+/// [`probe_order`] 的测试入口。
+#[cfg(test)]
+pub(crate) fn probe_order_for_test(
+    eligible: &[usize],
+    segmentations: &[Segmentation],
+) -> Vec<usize> {
+    probe_order(eligible, segmentations)
+}
+
+/// 切分的结构签名：音节数、不完整音节数、各音节字母数。形状相同的切分在词格上等价。
+type StructureKey = (usize, usize, Vec<usize>);
+
+fn structure_key(segmentation: &Segmentation) -> StructureKey {
+    (
+        segmentation.syllables.len(),
+        segmentation.incomplete_count(),
+        segmentation
+            .syllables
+            .iter()
+            .map(|syllable| syllable.text.len())
+            .collect(),
+    )
 }
 
 /// 按探针分挑出真正要做多路径搜索的切分，返回 `probes` 里的下标（已按探针分降序）。
 ///
 /// 保底三个代表先入：探针分最高的切分（证据最强）、parser 的首选（与旧行为连续）、
-/// 以及音节数不同于最优探针的最佳切分（切分结构代表，避免名额全被同一类切分占掉）。
-/// 其余按探针分从高到低填，落后最优探针超过 [`JOINT_PROBE_SLACK`] 就停。
-fn plan_joint_segmentations(
-    probes: &[(usize, Conversion)],
-    segmentations: &[Segmentation],
-) -> Vec<usize> {
+/// 以及结构签名不同于最优探针的最佳切分（切分结构代表）。其余按探针分从高到低填，
+/// 落后最优探针超过 [`JOINT_PROBE_SLACK`] 就停。
+fn plan_joint_segmentations(probes: &[Probe], segmentations: &[Segmentation]) -> Vec<usize> {
     if probes.is_empty() {
         return Vec::new();
     }
     let mut order: Vec<usize> = (0..probes.len()).collect();
     order.sort_by(|left, right| {
         probes[*right]
-            .1
+            .best
             .score
-            .total_cmp(&probes[*left].1.score)
-            .then_with(|| probes[*left].0.cmp(&probes[*right].0))
+            .total_cmp(&probes[*left].best.score)
+            .then_with(|| probes[*left].index.cmp(&probes[*right].index))
     });
     let mut chosen: Vec<usize> = Vec::with_capacity(JOINT_MAX_SEGMENTATIONS);
     let take = |position: usize, chosen: &mut Vec<usize>| {
@@ -376,13 +484,13 @@ fn plan_joint_segmentations(
         }
     };
     take(order[0], &mut chosen);
-    if let Some(position) = probes.iter().position(|(index, _)| *index == 0) {
+    if let Some(position) = probes.iter().position(|probe| probe.index == 0) {
         take(position, &mut chosen);
     }
-    let best_syllables = segmentations[probes[order[0]].0].syllables.len();
+    let best_structure = structure_key(&segmentations[probes[order[0]].index]);
     if let Some(&position) = order
         .iter()
-        .find(|position| segmentations[probes[**position].0].syllables.len() != best_syllables)
+        .find(|position| structure_key(&segmentations[probes[**position].index]) != best_structure)
     {
         take(position, &mut chosen);
     }
@@ -392,9 +500,9 @@ fn plan_joint_segmentations(
         }
         take(position, &mut chosen);
     }
-    let floor = probes[order[0]].1.score - JOINT_PROBE_SLACK;
+    let floor = probes[order[0]].best.score - JOINT_PROBE_SLACK;
     for &position in &order {
-        if chosen.len() >= JOINT_MAX_SEGMENTATIONS || probes[position].1.score < floor {
+        if chosen.len() >= JOINT_MAX_SEGMENTATIONS || probes[position].best.score < floor {
             break;
         }
         take(position, &mut chosen);
@@ -540,10 +648,14 @@ mod tests {
         }
     }
 
-    fn probe_scores(scores: &[(usize, f64)]) -> Vec<(usize, Conversion)> {
+    fn probe_scores(scores: &[(usize, f64)]) -> Vec<Probe> {
         scores
             .iter()
-            .map(|(index, score)| (*index, route("", &[""], *score, *score, 0.0)))
+            .map(|(index, score)| Probe {
+                index: *index,
+                depth: 3,
+                best: route("", &[""], *score, *score, 0.0),
+            })
             .collect()
     }
 
@@ -566,9 +678,9 @@ mod tests {
         ];
         let probes = probe_scores(&[(0, -19.0), (1, -17.0), (2, -2.0)]);
         let plan = plan_joint_segmentations(&probes, &segmentations);
-        assert_eq!(probes[plan[0]].0, 2, "探针分最高的切分先展开：{plan:?}");
+        assert_eq!(probes[plan[0]].index, 2, "探针分最高的切分先展开：{plan:?}");
         assert!(
-            plan.iter().any(|position| probes[*position].0 == 0),
+            plan.iter().any(|position| probes[*position].index == 0),
             "parser 首选保底：{plan:?}"
         );
         assert!(plan.len() <= JOINT_MAX_SEGMENTATIONS);
@@ -584,13 +696,16 @@ mod tests {
         ];
         let probes = probe_scores(&[(0, -3.0), (1, -3.5), (2, -40.0), (3, -41.0)]);
         let plan = plan_joint_segmentations(&probes, &segmentations);
-        let indices: Vec<usize> = plan.iter().map(|position| probes[*position].0).collect();
+        let indices: Vec<usize> = plan
+            .iter()
+            .map(|position| probes[*position].index)
+            .collect();
         assert!(!indices.contains(&2), "落后太多不展开：{plan:?}");
         assert!(!indices.contains(&3), "落后太多不展开：{plan:?}");
     }
 
     #[test]
-    fn plan_keeps_a_different_syllable_count_as_structure_representative() {
+    fn plan_keeps_a_different_structure_as_representative() {
         let segmentations = vec![
             segmentation(&["ken", "eng"]),
             segmentation(&["ke", "neng"]),
@@ -598,7 +713,10 @@ mod tests {
         ];
         let probes = probe_scores(&[(0, -9.0), (1, -8.0), (2, -9.2)]);
         let plan = plan_joint_segmentations(&probes, &segmentations);
-        let indices: Vec<usize> = plan.iter().map(|position| probes[*position].0).collect();
+        let indices: Vec<usize> = plan
+            .iter()
+            .map(|position| probes[*position].index)
+            .collect();
         assert_eq!(indices[0], 1);
         assert!(indices.contains(&0), "parser 首选保底：{plan:?}");
         assert!(indices.contains(&2), "结构代表保底：{plan:?}");

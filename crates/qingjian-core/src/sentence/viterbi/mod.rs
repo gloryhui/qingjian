@@ -273,7 +273,15 @@ fn convert_path_groups_inner(
         for end in start + 1..=n.min(start + MAX_WORD_SYLLABLES) {
             let span = &positions[start..end];
             let hits = cache.get_or_insert_with(SpanCache::key(span), || {
-                span_candidates(dictionaries, span, start, personal, &weight, &cost)
+                span_candidates(
+                    dictionaries,
+                    span,
+                    start,
+                    personal,
+                    &weight,
+                    &cost,
+                    SPAN_CANDIDATES,
+                )
             });
             if let Some(trace) = diagnostic.as_deref_mut() {
                 trace.spans.push(SpanDiagnostic {
@@ -493,6 +501,9 @@ pub(crate) fn effective_len(positions: &[Vec<SyllablePattern<'_>>], keep_partial
 /// 个人次数只在这里保证用户常用的同音词进得了格子，不进路径打分（那是 n-gram 的事）；
 /// 打折让敲错变体命中的词只在原样命中不够多时才进格子，而常用词（关系）即使打折也留得住。
 /// 格子里有简拼位置时命中的是一大片不同读音的词，多留一些让语言模型去挑。
+/// `cap` 是格子最多留几个词：整句词图用 [`SPAN_CANDIDATES`]（简拼格子用
+/// [`ABBREVIATED_SPAN_CANDIDATES`]），未登录组合候选要看得更宽一点，见
+/// [`crate::engine::query::composed`]。
 pub(crate) fn span_candidates(
     dictionaries: &[&Dictionary],
     span: &[Vec<SyllablePattern<'_>>],
@@ -500,6 +511,7 @@ pub(crate) fn span_candidates(
     personal: Personal<'_>,
     weight: &impl Fn(&str) -> u32,
     cost: &impl Fn(usize, &str) -> f64,
+    cap: usize,
 ) -> Vec<SpanWord> {
     let alternatives = span.iter().any(|p| p.len() > 1);
     let penalty_of = |m: &Match<'_>| {
@@ -522,14 +534,24 @@ pub(crate) fn span_candidates(
             (score, penalty, m)
         })
         .collect();
-    scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
-    scored.dedup_by(|a, b| a.2.text == b.2.text);
     let abbreviated = span.iter().any(|p| p.iter().any(|t| !t.complete));
-    scored.truncate(if abbreviated {
-        ABBREVIATED_SPAN_CANDIDATES
+    let cap = if abbreviated {
+        cap.max(ABBREVIATED_SPAN_CANDIDATES)
     } else {
-        SPAN_CANDIDATES
-    });
+        cap
+    };
+    // 只要前 `cap` 个：单字母简拼的格子能命中几千条，全排一遍是热路径上最贵的一步。
+    // 先按分数部分排序取出前 `cap`，再把这 `cap` 条排好、去重。
+    let order = |a: &(f64, f64, Match<'_>), b: &(f64, f64, Match<'_>)| {
+        b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal)
+    };
+    if scored.len() > cap {
+        scored.select_nth_unstable_by(cap, order);
+        scored.truncate(cap);
+    }
+    scored.sort_by(order);
+    scored.dedup_by(|a, b| a.2.text == b.2.text);
+    scored.truncate(cap);
     scored
         .into_iter()
         .map(|(_, penalty, hit)| SpanWord {

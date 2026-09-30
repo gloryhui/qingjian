@@ -40,7 +40,7 @@ const DEFAULT_INPUTS: [&str; 6] = [
 ];
 
 /// 触发一次性开销用的陪跑输入：两个音节，保证共现索引会被建起来。
-const PRIMER: &str = "shide";
+const PRIMER: &str = "teng'hu";
 
 struct Samples(Vec<f64>);
 

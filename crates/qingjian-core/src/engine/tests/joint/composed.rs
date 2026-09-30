@@ -9,6 +9,7 @@
 //! - 同音堆砌：`也狼`、`野浪`、`夜狼`… 同样没有共现证据，不得因为拼得出来就进候选。
 
 use super::*;
+use crate::sentence::LanguageModel;
 
 /// 组合候选在候选表里的位置上限：必须在第一页（或明确的前 N 个）之内。
 const FRONT: usize = 6;
@@ -71,58 +72,128 @@ fn control_cases_prove_the_mechanism_is_generic() {
     }
 }
 
+/// 「交界字有没有在别的词条里同框」不再是准入条件。
+///
+/// 受控词库里每条组合的两个字都没有任何共现词条，只要整段拼音没有更好的读法，
+/// 它们照样进池子、照样能被选中——准入只看结构、完整覆盖与 margin。
 #[test]
-fn compounds_without_dictionary_evidence_are_not_dumped_into_the_list() {
-    let mut engine = Engine::new(real_dictionary());
-    for (input, absent) in [
-        ("yun'bao", "云豹"),
-        ("zhi'bei", "纸杯"),
-        ("zhu'qiao", "竹桥"),
-        ("zhi'san", "纸伞"),
-        ("shi'jie", "石阶"),
+fn compounds_are_admitted_without_dictionary_cooccurrence() {
+    for (input, wanted, parts) in [
+        ("ye'lang", "野狼", [("野", "ye"), ("狼", "lang")]),
+        ("teng'hu", "藤壶", [("藤", "teng"), ("壶", "hu")]),
+        ("yun'bao", "云豹", [("云", "yun"), ("豹", "bao")]),
+        ("zhi'bei", "纸杯", [("纸", "zhi"), ("杯", "bei")]),
+        ("zhi'san", "纸伞", [("纸", "zhi"), ("伞", "san")]),
+        ("shi'jie", "石阶", [("石", "shi"), ("阶", "jie")]),
     ] {
+        // 每个音节给两个字：目标组合的两个字，外加两组同样合法的竞争字
+        let mut source = String::new();
+        for (character, syllable) in parts {
+            let filler = if syllable == "ye" { "叶" } else { "河" };
+            source.push_str(&format!(
+                "{character}\t{syllable}\t9000\n{filler}\t{syllable}\t8000\n"
+            ));
+        }
+        let mut engine = Engine::new(Dictionary::parse(&source).unwrap());
+        engine.set_input(input);
         let all = texts(&mut engine, input);
         assert!(
-            !all.iter().any(|text| text == absent),
-            "{input} 不该给出没有共现证据的组合 {absent}"
+            all.iter().any(|text| text == wanted),
+            "{input} 的 {wanted} 应当可选（没有任何共现证据）：{all:?}"
         );
+        let left = parts[0].0.chars().next().unwrap();
+        let right = parts[1].0.chars().next().unwrap();
+        assert!(!engine.composes(left, right), "{wanted} 本就没有共现证据");
     }
 }
 
+/// 真实词库里这几个正常汉语组合既不在词库里、也没有任何共现证据——
+/// 它们出不出现只由**结构条件 + margin + 名额**决定，与共现无关。
+///
+/// 这几条要真正排进前几名需要语义证据（产品语料 LM 或神经分，见
+/// `a_language_model_that_knows_the_compound_lifts_it_to_the_front`），
+/// PR 与 `docs/notes/issue-13-joint-oov.md` 标注了 `WAITING_FOR_PRODUCT_LM_EVAL`。
 #[test]
-fn homophone_pileups_are_not_exposed_as_composed_candidates() {
+fn real_dictionary_compounds_have_no_cooccurrence_evidence_at_all() {
+    let engine = Engine::new(real_dictionary());
+    for (left, right) in [
+        ('云', '豹'),
+        ('纸', '杯'),
+        ('纸', '伞'),
+        ('石', '阶'),
+        ('藤', '壶'),
+        ('野', '狼'),
+    ] {
+        let supported = engine.composes(left, right);
+        if (left, right) == ('野', '狼') {
+            assert!(supported, "野狼 有 狼子野心 作证，靠共现加成排到组合池第一");
+        } else {
+            assert!(
+                !supported,
+                "{left}{right} 在词库里没有任何共现词条，出不出候选与共现无关"
+            );
+        }
+    }
+}
+
+/// 词库共现只影响排序：`ye'lang` 下 `野狼` 因此排在 `也浪` 前面，但两者都在池子里。
+#[test]
+fn dictionary_cooccurrence_only_ranks_never_admits() {
     let mut engine = Engine::new(real_dictionary());
-    let all = texts(&mut engine, "ye'lang");
-    for pileup in ["也狼", "野浪", "夜狼", "叶郎", "野郎", "也浪"] {
-        assert!(!all.iter().any(|text| text == pileup), "{pileup} 不该出现");
-    }
-    // 只有 野狼 有共现证据，所以一次只出一条
-    let stats = engine.last_joint_stats();
-    assert_eq!(stats.generated_candidates, 1, "{stats:?}");
+    engine.set_input("ye'lang");
+    let _ = engine.query().unwrap();
+    let pool = engine.last_composed_pool();
+    let wolf = pool
+        .iter()
+        .position(|text| text == "野狼")
+        .expect("野狼在池子里");
+    let other = pool
+        .iter()
+        .position(|text| text == "也浪")
+        .expect("也浪也在池子里（准入不看共现）");
+    assert!(wolf < other, "有共现证据的排前面：{pool:?}");
+    assert!(engine.composes('野', '狼'));
+    assert!(!engine.composes('也', '浪'));
 }
 
-/// 同样的拼音形状，只因为词库里有没有共现证据而给出不同结果：门槛是词库推出来的，不是拼音形状。
+/// 真正的垃圾反例：结构上就不合格的组合一条都不进池子。
 #[test]
-fn the_gate_is_dictionary_evidence_not_pinyin_shape() {
-    let with_evidence = Dictionary::parse(
-        "野\tye\t9000\n狼\tlang\t8000\n夜郎\tye lang\t9000\n狼子野心\tlang zi ye xin\t100\n",
-    )
-    .unwrap();
-    let without = Dictionary::parse("野\tye\t9000\n狼\tlang\t8000\n夜郎\tye lang\t9000\n").unwrap();
-    let mut engine = Engine::new(with_evidence);
+fn structurally_invalid_compositions_never_enter_the_pool() {
+    // 末尾音节没打完：整段边界本身就不确定
+    let mut engine = Engine::new(real_dictionary());
+    let _ = texts(&mut engine, "ye'l");
     assert!(
-        texts(&mut engine, "ye'lang")
-            .iter()
-            .any(|text| text == "野狼")
+        engine.last_composed_pool().is_empty(),
+        "{:?}",
+        engine.last_composed_pool()
     );
-    assert!(engine.composes('野', '狼'));
-    let mut engine = Engine::new(without);
+
+    // 两个部分必须是词库里的词；敲错 / 模糊音命中的边（代价 > 0）不算
+    let dictionary =
+        Dictionary::parse("野\tye\t9000\n狼\tlang\t8000\n夜郎\tye lang\t500\n拦\tlan\t9000\n")
+            .unwrap();
+    let mut engine = Engine::new(dictionary);
+    let _ = texts(&mut engine, "ye'lang");
+    let pool = engine.last_composed_pool();
+    assert!(pool.iter().any(|text| text == "野狼"), "{pool:?}");
     assert!(
-        !texts(&mut engine, "ye'lang")
-            .iter()
-            .any(|text| text == "野狼")
+        !pool.iter().any(|text| text == "野拦"),
+        "靠模糊音 / 敲错边凑出来的组合不进池子：{pool:?}"
     );
-    assert!(!engine.composes('野', '狼'));
+}
+
+/// 与前一条最优路径差太远的组合不进池子（margin 是唯一与分数有关的准入条件）。
+#[test]
+fn compositions_far_behind_the_best_path_stay_out() {
+    let dictionary =
+        Dictionary::parse("蛋糕\tdan gao\t900000\n当\tdang\t100\n奥\tao\t100\n").unwrap();
+    let mut engine = Engine::new(dictionary);
+    let all = texts(&mut engine, "dangao");
+    assert_eq!(all[0], "蛋糕");
+    assert!(
+        !all.iter().any(|text| text == "当奥"),
+        "落后最优路径 10 nat 以上的组合不该占名额：{all:?}"
+    );
 }
 
 #[test]
@@ -167,7 +238,7 @@ fn first_selection_is_accepted_and_learned() {
 /// 词频按产品词库的量级给：完整词与「拆成两个字」的路径分差距要和真实情况相当。
 fn competing_dictionary() -> Dictionary {
     Dictionary::parse(
-        "净水\tjing shui\t3000\n井\tjing\t9000\n水\tshui\t8000\n警\tjing\t7000\n税\tshui\t6000\n水井\tshui jing\t500\n税警\tshui jing\t400\n",
+        "净水\tjing shui\t800\n井\tjing\t9000\n水\tshui\t8000\n警\tjing\t7000\n税\tshui\t6000\n水井\tshui jing\t500\n税警\tshui jing\t400\n",
     )
     .unwrap()
 }
@@ -305,11 +376,90 @@ fn personal_evidence_admits_a_composition_without_dictionary_support() {
     );
 }
 
-/// 完整覆盖、无占位：末尾音节还没打完时不造组合。
+/// 完整覆盖、无占位：末尾音节还没打完时一条组合都不造。
 #[test]
 fn incomplete_trailing_syllable_yields_no_composition() {
     let mut engine = Engine::new(real_dictionary());
-    let all = texts(&mut engine, "ye'lan");
+    let all = texts(&mut engine, "ye'l");
     assert!(!all.iter().any(|text| text == "野狼"));
     assert_eq!(engine.last_joint_stats().generated_candidates, 0);
+}
+
+/// 附加词库热加载：词库索引随 `set_extra_dictionaries` 立刻失效重建，不用重启进程。
+#[test]
+fn composition_index_follows_extra_dictionaries_at_runtime() {
+    let base = || {
+        Dictionary::parse(
+            "野\tye\t9000\n狼\tlang\t8000\n夜郎\tye lang\t500\n叶\tye\t9500\n郎\tlang\t8500\n",
+        )
+        .unwrap()
+    };
+    let mut engine = Engine::new(base());
+    engine.set_input("ye'lang");
+    let _ = engine.query().unwrap();
+    assert!(!engine.composes('野', '狼'), "主词库里没有共现证据");
+    let before = engine.last_composed_pool();
+    let wolf = before
+        .iter()
+        .position(|text| text == "野狼")
+        .expect("野狼在池子里");
+    assert!(wolf > 0, "没有共现证据时排不到组合池第一位：{before:?}");
+
+    // 导入一张含「狼子野心」的附加词库：新证据必须立刻生效
+    engine.set_extra_dictionaries(vec![
+        Dictionary::parse("狼子野心\tlang zi ye xin\t100\n").unwrap(),
+    ]);
+    assert!(engine.composes('野', '狼'), "导入后立刻生效，不用重启");
+    engine.set_input("ye'lang");
+    let _ = engine.query().unwrap();
+    assert_eq!(
+        engine.last_composed_pool()[0],
+        "野狼",
+        "新证据立刻影响排序：{:?}",
+        engine.last_composed_pool()
+    );
+
+    // 移除：旧证据立刻消失
+    engine.set_extra_dictionaries(Vec::new());
+    assert!(!engine.composes('野', '狼'), "移除后旧证据立刻消失");
+    engine.set_input("ye'lang");
+    let _ = engine.query().unwrap();
+    assert_ne!(
+        engine.last_composed_pool()[0],
+        "野狼",
+        "排序回到没有证据时的样子"
+    );
+}
+
+/// 语言模型认识这个组合时它就该被选出来。
+///
+/// 本环境没有仓库外的产品工件 `data/generated/lm.qj`（PR 标注 `WAITING_FOR_PRODUCT_LM_EVAL`），
+/// 这里用受控模型证明链路：只要模型给出 `藤`→`壶` 的接续证据，`藤壶` 就从池子后段升到第一条。
+#[test]
+fn a_language_model_that_knows_the_compound_lifts_it_to_the_front() {
+    struct KnowsTheCompound;
+
+    impl LanguageModel for KnowsTheCompound {
+        fn log_prob(&self, previous: Option<&str>, word: &str) -> Option<f64> {
+            match (previous, word) {
+                (Some("藤"), "壶") => Some(-0.5),
+                _ => None,
+            }
+        }
+    }
+
+    let plain = {
+        let mut engine = Engine::new(real_dictionary());
+        let _ = texts(&mut engine, "teng'hu");
+        engine.last_composed_pool()
+    };
+    assert_ne!(plain[0], "藤壶", "没有模型时排在更常用的同音组合后面");
+
+    let mut engine = Engine::new(real_dictionary()).with_language_model(Box::new(KnowsTheCompound));
+    let all = texts(&mut engine, "teng'hu");
+    assert_eq!(engine.last_composed_pool()[0], "藤壶");
+    assert!(
+        all.iter().any(|text| text == "藤壶"),
+        "模型认识就该选得到：{all:?}"
+    );
 }
