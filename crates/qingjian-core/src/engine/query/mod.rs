@@ -3,6 +3,7 @@
 use super::*;
 
 mod code;
+mod composed;
 mod english_tail;
 mod joint;
 mod result;
@@ -21,6 +22,7 @@ impl Engine {
     /// 上屏之后接着组句；见 [`Composition::scope`]。
     pub fn query(&self) -> Result<Query, ParseError> {
         self.last_rescored.set(false);
+        self.joint_stats.set(JointStats::default());
         let mut query = match self.query_inner() {
             Ok(query) => query,
             Err(error) => {
@@ -722,6 +724,13 @@ impl Engine {
             }
         }
         expanded
+    }
+
+    /// 最近一次查询里联合整句搜索的规模（切分数、词格数、路径数、组合候选数）。评测与诊断用。
+    ///
+    /// 只统计 `query_inner` 里拼音侧的联合整句搜索：形码、英文、快捷这些不走那一条路。
+    pub fn last_joint_stats(&self) -> JointStats {
+        self.joint_stats.get()
     }
 
     /// 本地整句转换把最优切分转成的汉字，给云端当参考（问字模式里就是问题的汉字形式）；转不出或有占位音节为空。

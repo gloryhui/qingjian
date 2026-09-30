@@ -236,22 +236,7 @@ fn convert_path_groups_inner(
     cache: &mut SpanCache,
     mut diagnostic: Option<&mut SearchDiagnostics>,
 ) -> Vec<Vec<Conversion>> {
-    let Some((last, head)) = positions.split_last() else {
-        return Vec::new();
-    };
-    let Some(&last) = last.first() else {
-        return Vec::new();
-    };
-    let abbreviated_head = head.iter().any(|p| p.first().is_none_or(|t| !t.complete));
-    let positions = if keep_partial
-        || last.complete
-        || abbreviated_head
-        || last.text.len() >= MIN_PARTIAL_LETTERS
-    {
-        positions
-    } else {
-        head
-    };
+    let positions = &positions[..effective_len(positions, keep_partial)];
     let n = positions.len();
     if n == 0 || k == 0 {
         return Vec::new();
@@ -487,11 +472,28 @@ impl LanguageModel for NoModel {
     }
 }
 
+/// 整句转换实际参与的音节位置数：全拼句子末尾没打完、又短于 [`MIN_PARTIAL_LETTERS`] 的音节不算
+/// （单个字母的前缀范围太大，`s` 匹配所有 s 开头的音节）；简拼句子里末尾单字母就是一个音节。
+/// 未登录组合候选要用同一套口径，才能命中 Viterbi 已经查过的词格。
+pub(crate) fn effective_len(positions: &[Vec<SyllablePattern<'_>>], keep_partial: bool) -> usize {
+    let Some(last) = positions.last().and_then(|position| position.first()) else {
+        return 0;
+    };
+    let abbreviated_head = positions[..positions.len() - 1]
+        .iter()
+        .any(|position| position.first().is_none_or(|pattern| !pattern.complete));
+    if keep_partial || last.complete || abbreviated_head || last.text.len() >= MIN_PARTIAL_LETTERS {
+        positions.len()
+    } else {
+        positions.len() - 1
+    }
+}
+
 /// 一个格子里的候选词：所有词库的精确命中，按词频（加用户选择次数与个人出现次数，替代写法命中的按代价打折）取前几个。
 /// 个人次数只在这里保证用户常用的同音词进得了格子，不进路径打分（那是 n-gram 的事）；
 /// 打折让敲错变体命中的词只在原样命中不够多时才进格子，而常用词（关系）即使打折也留得住。
 /// 格子里有简拼位置时命中的是一大片不同读音的词，多留一些让语言模型去挑。
-fn span_candidates(
+pub(crate) fn span_candidates(
     dictionaries: &[&Dictionary],
     span: &[Vec<SyllablePattern<'_>>],
     start: usize,
