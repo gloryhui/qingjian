@@ -40,7 +40,7 @@ impl LanguageModel for SplitBigram {
     fn log_prob(&self, previous: Option<&str>, word: &str) -> Option<f64> {
         match (previous, word) {
             (None, "的") => Some(-0.5),
-            (Some("的"), "一个") => Some(-0.5),
+            (Some("的"), "一个" | "原生") => Some(-0.5),
             _ => Some(-5.0),
         }
     }
@@ -149,4 +149,101 @@ fn repeated_queries_on_one_snapshot_are_deterministic() {
     for _ in 0..4 {
         assert_eq!(top(&mut engine, "diyige"), first);
     }
+}
+
+fn pick_word(engine: &mut Engine, input: &str, text: &str) {
+    engine.set_input(input);
+    let candidate = engine
+        .query()
+        .unwrap()
+        .candidates
+        .items
+        .into_iter()
+        .find(|candidate| candidate.text == text && candidate.kind == CandidateKind::Chinese)
+        .unwrap_or_else(|| panic!("候选里没有 {text}"));
+    engine.commit(&candidate);
+}
+
+/// 一条与查询结果同形状的整句候选。`choice_weight = 0` 时整句按设计被完整词保护挡住，
+/// 正常查询里不会出现，模拟「误选一条本不该选的整句」只能用这个形状直接上屏。
+fn sentence_candidate(text: &str, syllables: &[&str]) -> Candidate {
+    Candidate {
+        text: text.to_owned(),
+        kind: CandidateKind::Sentence,
+        syllables: syllables
+            .iter()
+            .map(|syllable| (*syllable).to_owned())
+            .collect(),
+        reading: None,
+        translation: None,
+        aux_code: None,
+    }
+}
+
+#[test]
+fn retraction_removes_only_the_sentence_choice_just_made() {
+    // 历史上有过两次明确选择，这次误选只该扣掉这次贡献的那一次。
+    let mut engine = engine_with(CountingLearner(HashMap::from([(
+        "deyuansheng\t的原生".to_owned(),
+        2,
+    )])));
+    engine.set_input("deyuansheng");
+    engine.commit(&sentence_candidate("的原生", &["de", "yuan", "sheng"]));
+    assert_eq!(engine.learner().choice_weight("deyuansheng", "的原生"), 3);
+
+    for _ in 0..3 {
+        engine.note_backspace();
+    }
+    pick_word(&mut engine, "deyuansheng", "德元升");
+    assert_eq!(engine.learner().choice_weight("deyuansheng", "的原生"), 2);
+}
+
+#[test]
+fn deleting_only_part_of_a_committed_sentence_does_not_retract_its_choice() {
+    let mut engine = engine_with(counted(&[]));
+    engine.set_input("deyuansheng");
+    engine.commit(&sentence_candidate("的原生", &["de", "yuan", "sheng"]));
+    assert_eq!(engine.learner().choice_weight("deyuansheng", "的原生"), 1);
+
+    // 只删一个字：还没把上屏的整句删掉，重打改选完整词也不撤销。
+    engine.note_backspace();
+    pick_word(&mut engine, "deyuansheng", "德元升");
+    assert_eq!(engine.learner().choice_weight("deyuansheng", "的原生"), 1);
+}
+
+#[test]
+fn deleting_a_mis_selected_sentence_restores_the_complete_word() {
+    let mut engine = engine_with(counted(&[("的", 500), ("原生", 200)]));
+    assert_eq!(top(&mut engine, "deyuansheng"), "德元升");
+
+    // 误选整句（choice 0 时它被完整词保护挡住，用同形状候选模拟这一次上屏）。
+    engine.set_input("deyuansheng");
+    engine.commit(&sentence_candidate("的原生", &["de", "yuan", "sheng"]));
+    assert_eq!(engine.learner().choice_weight("deyuansheng", "的原生"), 1);
+    // 明确选择是放行证据，整句排第一。
+    assert_eq!(top(&mut engine, "deyuansheng"), "的原生");
+
+    for _ in 0..3 {
+        engine.note_backspace();
+    }
+    pick_word(&mut engine, "deyuansheng", "德元升");
+    // 撤销掉这次误选后，排序回到完整词。
+    assert_eq!(engine.learner().choice_weight("deyuansheng", "的原生"), 0);
+    assert_eq!(top(&mut engine, "deyuansheng"), "德元升");
+}
+
+#[test]
+fn quoted_and_continuous_inputs_share_the_sentence_choice_key() {
+    let mut engine = engine_with(counted(&[("的", 500), ("一个", 300)]));
+    engine.set_input("di'yi'ge");
+    engine.commit(&sentence_candidate("的一个", &["di", "yi", "ge"]));
+    assert_eq!(engine.learner().choice_weight("diyige", "的一个"), 1);
+    assert_eq!(top(&mut engine, "diyige"), "的一个");
+
+    for _ in 0..3 {
+        engine.note_backspace();
+    }
+    pick_word(&mut engine, "diyige", "第一个");
+    assert_eq!(engine.learner().choice_weight("diyige", "的一个"), 0);
+    assert_eq!(top(&mut engine, "diyige"), "第一个");
 }

@@ -13,8 +13,12 @@ pub struct LastCommit {
     /// 消耗掉的那段拼音（按输入串记选择用的键）。
     pub input: String,
 
-    /// 记过一次选择次数（`Learner::record`）与输入串选择（`record_choice`）的词；整句上屏没有。
+    /// 记过一次选择次数（`Learner::record`）与输入串选择（`record_choice`）的词；整句上屏没有
+    /// （整句不记词频，它的选择记录在 [`Self::sentence_choice`]）。
     pub chosen: Option<String>,
+
+    /// 整句上屏时记的「输入串 → 整句文本」选择：撤销时只退选择次数，不退词频（整句没有记词频）。
+    pub sentence_choice: Option<(String, String)>,
 
     /// 记过的词转移（含上文与份数）。
     pub transitions: Vec<Transition>,
@@ -40,6 +44,7 @@ impl LastCommit {
             chars: text.chars().count(),
             input: String::new(),
             chosen: None,
+            sentence_choice: None,
             transitions: Vec::new(),
             typos: Vec::new(),
             erased: 0,

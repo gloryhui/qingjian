@@ -264,6 +264,9 @@ impl Engine {
                 | CandidateKind::Cloud
                 | CandidateKind::Sentence
         );
+        // 整句不记词频，选择记录单独放，撤销时只退 `unrecord_choice`。
+        let sentence_choice = (candidate.kind == CandidateKind::Sentence)
+            .then(|| (input.clone(), candidate.text.clone()));
         let commit = if learned {
             LastCommit {
                 text: candidate.text.clone(),
@@ -274,6 +277,7 @@ impl Engine {
                     CandidateKind::Chinese | CandidateKind::Code | CandidateKind::Cloud
                 )
                 .then(|| candidate.text.clone()),
+                sentence_choice,
                 transitions: std::mem::take(&mut self.recording),
                 typos,
                 erased: 0,
@@ -361,6 +365,9 @@ impl Engine {
         if let Some(chosen) = &last.chosen {
             self.learner.unrecord(chosen);
             self.learner.unrecord_choice(&last.input, chosen);
+        }
+        if let Some((key, sentence)) = &last.sentence_choice {
+            self.learner.unrecord_choice(key, sentence);
         }
         for transition in &last.transitions {
             self.learner.unrecord_transition(

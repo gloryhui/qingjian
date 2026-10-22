@@ -89,6 +89,41 @@ A/B/D 是回归，C 说明「明确选过整个结果」的记录本身没有害
 受控实验（产品数据 + 上述学习档案）：A/B/D 从「整句抢位」回到完整词第一；C（明确选过整串）
 保持 `的一个` 第一。
 
+## 第二轮（2026-10-22）：整句选择记录的撤销
+
+第一轮给整句上屏加了 `record_choice()`，但 `LastCommit` 的撤销清单里没有它：
+`chosen` 只收 `Chinese / Code / Cloud`，`apply_retraction()` 也只对 `chosen` 调 `unrecord` +
+`unrecord_choice`。于是误选整句产生的选择次数会永久残留；而它现在是完整词保护的放行证据，
+错误学习会持续影响 Top-1。
+
+修法是**独立字段**，不复用 `chosen`（`chosen` 撤销时还会 `unrecord` 词频，整句并没有记过词频，
+混用会造成不对称扣减）：
+
+- `LastCommit.sentence_choice: Option<(String, String)>`：整句上屏时记 `(输入串键, 整句文本)`。
+- `apply_retraction()` 对它只调 `unrecord_choice`；`LastCommit::plain()` 与
+  `prediction::commit_cloud` 的构造同步补 `None`。
+- 既有延迟撤销语义不变：退格删干净 → 重新输入同一段 → 选了不同结果才撤销；重选同一整句不扣减。
+
+生命周期审计结论：
+
+- 整句上屏只记一次选择；`finish_buffer()` 记的是「整段 → 合成词」，键与文本都和整句那条不同，
+  不会对同一输入串重复计数（分次选完的第二次上屏即使同时走这两条，也是两条互不等价的证据）。
+- `recent_commits.remove(index)` 保证一次上屏只撤销一次；`unrecord_choice` 归零会删条目，
+  落盘不会留下 0 次行，重载后不会复活。
+- 私密输入走 `MutedLearner`，`record` 与 `unrecord` 一起被抑制，仍然对称。
+- 整句只记覆盖它自己读音的 `input`（`consumed_by`），部分上屏不会写入整段证据。
+
+新增回归：
+
+- `learning::erasing_a_committed_sentence_and_choosing_another_word_retracts_its_choice`
+- `learning::repeating_the_same_sentence_after_deleting_it_keeps_the_choice`
+- `learning::the_choice_recorded_by_finish_buffer_is_still_retracted`
+- `joint::top1_ranking::retraction_removes_only_the_sentence_choice_just_made`
+- `joint::top1_ranking::deleting_a_mis_selected_sentence_restores_the_complete_word`
+- `joint::top1_ranking::deleting_only_part_of_a_committed_sentence_does_not_retract_its_choice`
+- `joint::top1_ranking::quoted_and_continuous_inputs_share_the_sentence_choice_key`
+- `frequency_learner::tests::choices_are_keyed_by_input_and_round_trip` 追加「撤销后落盘重载」。
+
 ## 风险与已知边界
 
 - **纯个人 n-gram 不再能越过完整词。** 这是有意收窄：跨输入框连续选 `和`、`并` 产生的转移

@@ -64,6 +64,18 @@ fn choices_are_keyed_by_input_and_round_trip() {
     assert_eq!(reloaded.choice_weight("ba", "吧"), 2);
     assert_eq!(reloaded.raw_count("nihooma"), 1);
     assert_eq!(reloaded.choice_weight("bazhege", "把"), 1);
+
+    // 撤销到 0 的条目不落盘：再重载也不会复活那条选择。
+    let mut learner = reloaded;
+    learner.unrecord_choice("ba", "吧");
+    learner.unrecord_choice("ba", "吧");
+    learner.flush();
+    let reloaded = FrequencyLearner::from_path(&path).unwrap();
+    assert_eq!(reloaded.choice_weight("ba", "吧"), 0);
+    // 只剩 bazhege → 把 与 raw 标记（`nihooma`），撤销掉的那条没有复活。
+    assert_eq!(reloaded.choice_count(), 2);
+    assert_eq!(reloaded.raw_count("nihooma"), 1);
+    std::fs::remove_dir_all(dir).unwrap();
 }
 
 #[test]
