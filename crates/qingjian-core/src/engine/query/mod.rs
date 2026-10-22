@@ -627,14 +627,22 @@ impl Engine {
         })
     }
 
-    /// 没有个人学习加分时，拼字整句不越过覆盖整段读音的完整词；神经分不算个人学习证据。
+    /// 没有**明确选择证据**时，拼字整句不越过覆盖整段读音的完整词；神经分不算个人学习证据。
+    ///
+    /// 放行条件必须是「用户在本输入串下明确选过这个完整结果」（整句候选、整段分几次选完的合成词）。
+    /// `Conversion::personal_bonus` 是路径上**逐词**累加的——`的`、`一个` 各自被选过就会 > 0——
+    /// 拿它放行等于让高频碎片的个人词频把生造组合顶到完整词前面（`di'yi'ge` 的 `的一个` 抢
+    /// `第一个` 首位就是这么来的）。单个词被选过不是「这次输入就要这个组合」的证据。
     pub(super) fn should_prefer_complete_word(
         &self,
         items: &[Candidate],
         conversion: &Conversion,
         typed: &str,
     ) -> bool {
-        if conversion.word_count() < 2 || conversion.altered() || conversion.personal_bonus > 1e-6 {
+        if conversion.word_count() < 2 || conversion.altered() {
+            return false;
+        }
+        if self.learner.choice_weight(typed, &conversion.text) > 0 {
             return false;
         }
         if items.iter().any(|candidate| {

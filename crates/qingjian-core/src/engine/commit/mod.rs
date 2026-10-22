@@ -124,9 +124,14 @@ impl Engine {
             }
             // 英文词带出的 emoji 没有音节，和英文词一样对应整段作用域
             CandidateKind::Emoji if candidate.syllables.is_empty() => self.whole_scope(),
+            // 整句不是一个词，不记词频；但要记「本输入串 → 整句文本」的明确选择：这是
+            // `should_prefer_complete_word` 唯一的放行证据（子词的词频不算），也是用户反复
+            // 选同一整句后它能排回第一的依据。
             CandidateKind::Sentence => {
                 typos = self.accepted_typos(candidate);
-                self.consumed_by(candidate)
+                let (consumed, input) = self.consumed_by(candidate);
+                self.learner.record_choice(&input, &candidate.text);
+                (consumed, input)
             }
             // emoji 按它对应词的音节消耗拼音，不记学习
             CandidateKind::Emoji => self.consumed_by(candidate),

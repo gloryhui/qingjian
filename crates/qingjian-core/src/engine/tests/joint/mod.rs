@@ -8,6 +8,7 @@ use crate::sentence::{LanguageModel, SentenceScorer};
 mod complete_word;
 mod composed;
 mod dynamic_budget;
+mod top1_ranking;
 
 fn real_dictionary() -> Dictionary {
     let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets/lexicon/dict.tsv");
