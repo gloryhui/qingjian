@@ -722,3 +722,78 @@ fn input_log_records_the_session_and_page_turns() {
     };
     assert_eq!(commit.pages, 2);
 }
+
+/// 查一次输入里指定文本的中文候选并上屏。
+fn pick_word(engine: &mut Engine, input: &str, text: &str) {
+    engine.set_input(input);
+    let candidate = engine
+        .query()
+        .unwrap()
+        .candidates
+        .items
+        .into_iter()
+        .find(|candidate| candidate.text == text && candidate.kind == CandidateKind::Chinese)
+        .expect("候选里没有该词");
+    engine.commit(&candidate);
+}
+
+/// 查一次输入里的第一条整句候选。
+fn sentence_of(engine: &mut Engine, input: &str) -> Candidate {
+    engine.set_input(input);
+    engine
+        .query()
+        .unwrap()
+        .candidates
+        .items
+        .into_iter()
+        .find(|candidate| candidate.kind == CandidateKind::Sentence)
+        .expect("应有整句候选")
+}
+
+#[test]
+fn erasing_a_committed_sentence_and_choosing_another_word_retracts_its_choice() {
+    let mut engine = engine().with_learner(Box::new(CountingLearner(HashMap::new())));
+    let sentence = sentence_of(&mut engine, "xiangkaifa");
+    assert_eq!(sentence.text, "想开发");
+    engine.commit(&sentence);
+    // 整句不记词频，只记一次「输入串 → 整句」的选择。
+    assert_eq!(engine.learner().weight("想开发"), 0);
+    assert_eq!(engine.learner().choice_weight("xiangkaifa", "想开发"), 1);
+
+    // 把三个字删干净，重打同一段改选 想：撤销整句那次选择。
+    for _ in 0..sentence.text.chars().count() {
+        engine.note_backspace();
+    }
+    pick_word(&mut engine, "xiangkaifa", "想");
+    assert_eq!(engine.learner().choice_weight("xiangkaifa", "想开发"), 0);
+}
+
+#[test]
+fn repeating_the_same_sentence_after_deleting_it_keeps_the_choice() {
+    let mut engine = engine().with_learner(Box::new(CountingLearner(HashMap::new())));
+    let sentence = sentence_of(&mut engine, "xiangkaifa");
+    engine.commit(&sentence);
+    for _ in 0..sentence.text.chars().count() {
+        engine.note_backspace();
+    }
+    // 删掉后重打同一段、选的还是同一整句：不算选错，不扣减，再记一次。
+    let again = sentence_of(&mut engine, "xiangkaifa");
+    engine.commit(&again);
+    assert_eq!(engine.learner().choice_weight("xiangkaifa", "想开发"), 2);
+}
+
+#[test]
+fn the_choice_recorded_by_finish_buffer_is_still_retracted() {
+    let mut engine = engine().with_learner(Box::new(CountingLearner(HashMap::new())));
+    pick_word(&mut engine, "xiangkaifa", "想");
+    assert_eq!(engine.composition().text(), "kaifa");
+    let rest = engine.query().unwrap().candidates.items[0].clone();
+    assert_eq!(rest.text, "开发");
+    engine.commit(&rest);
+    assert_eq!(engine.learner().choice_weight("xiangkaifa", "想开发"), 1);
+
+    engine.note_backspace();
+    engine.note_backspace();
+    pick_word(&mut engine, "kaifa", "开饭");
+    assert_eq!(engine.learner().choice_weight("xiangkaifa", "想开发"), 0);
+}
