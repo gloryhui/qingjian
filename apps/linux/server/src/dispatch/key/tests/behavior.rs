@@ -80,6 +80,7 @@ fn keypad_punctuation_is_half_width_and_regular_punctuation_is_full_width() {
 #[test]
 fn shift_letter_configuration_does_not_change_caps_or_english() {
     let mut router = router(5);
+    router.config.shift_letter_compose = false;
     let shift = KeyModifiers {
         shift: true,
         ..Default::default()

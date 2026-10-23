@@ -250,6 +250,7 @@ fn shuangpin_semicolon_stays_in_buffer_in_question_mode() {
 fn shuangpin_enters_modes_with_shifted_letters() {
     let mut router = router_with(RouterConfig {
         scheme: Scheme::Shuangpin(ShuangpinScheme::Xiaohe),
+        shift_letter_compose: false,
         ..RouterConfig::default()
     });
     // Shift+V 进表达式：数字和运算符进缓冲区，空格上屏结果。
@@ -270,7 +271,7 @@ fn shuangpin_enters_modes_with_shifted_letters() {
     let (_, _, frame) = press(&mut router, digit(0));
     assert_eq!(candidate_texts(&frame), ["一"]);
     press(&mut router, function_key(0x1B));
-    // 小写 v 仍是音节键；其他大写字母、全拼下的 Shift+V 照旧交给应用。
+    // 显式关闭 Shift 字母组句时，小写 v 仍是音节键，其他大写字母和全拼下的 Shift+V 交给应用。
     let (_, _, frame) = type_letters(&mut router, "v");
     assert_eq!(preedit(&frame), "zh");
     press(&mut router, function_key(0x1B));
@@ -278,7 +279,10 @@ fn shuangpin_enters_modes_with_shifted_letters() {
         press(&mut router, letter_with('A', SHIFT)).0,
         KeyOutcome::Passthrough
     );
-    let mut full = router_with(RouterConfig::default());
+    let mut full = router_with(RouterConfig {
+        shift_letter_compose: false,
+        ..RouterConfig::default()
+    });
     let (outcome, _, frame) = press(&mut full, letter_with('V', SHIFT));
     assert_eq!(outcome, KeyOutcome::Passthrough);
     assert!(frame.is_empty());
@@ -324,21 +328,20 @@ fn punctuation_toggle_is_remembered_per_mode() {
     assert_eq!(commit.as_deref(), Some("hello，"));
 }
 
-/// 中文模式下的 Shift 大写：缺省交给应用（与以前一致），配成 compose 才收进组句缓冲区。
+/// 中文模式下的 Shift 大写：默认进组句，显式关闭时交给应用。
 #[test]
 fn shift_letters_follow_the_configuration() {
-    // 缺省 `shift_letter = "passthrough"`：临时打英文，字母归应用
-    let mut router = router();
-    let (outcome, commit, _) = press(&mut router, letter_with('P', SHIFT));
+    // 显式配置 passthrough：临时打英文，字母归应用。
+    let mut passthrough = router_with(RouterConfig {
+        shift_letter_compose: false,
+        ..RouterConfig::default()
+    });
+    let (outcome, commit, _) = press(&mut passthrough, letter_with('P', SHIFT));
     assert_eq!(outcome, KeyOutcome::Passthrough);
     assert_eq!(commit, None);
 
-    // 配成 compose：进组句、按小写参与匹配，拼音行按敲的样子显示，回车原样上屏时还原大写
-    let config = RouterConfig {
-        shift_letter_compose: true,
-        ..RouterConfig::default()
-    };
-    let mut router = router_with(config);
+    // 默认 compose：进组句、按小写参与匹配，拼音行按敲的样子显示，回车原样上屏时还原大写。
+    let mut router = router();
     type_letters(&mut router, "ni");
     let (outcome, commit, frame) = press(&mut router, letter_with('A', SHIFT));
     assert_eq!((outcome, commit.as_deref()), (KeyOutcome::Consumed, None));

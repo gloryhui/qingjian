@@ -16,7 +16,7 @@ pub struct RouterConfig {
     pub cloud_slots: usize,
 
     /// 中文模式下 Shift+字母收进组句缓冲区（`[general] shift_letter = "compose"`）。
-    /// 关着（缺省）时壳把大写字母交给应用，与以前一致。
+    /// 默认开启；显式关闭时壳把大写字母交给应用。
     pub shift_letter_compose: bool,
 
     /// 候选排布（`[general] layout`）。

@@ -231,7 +231,8 @@ IMK 输入法，源码按 `app / host / imk / candidates / menubar / preferences
   聚合的 `modifierFlags` 分不出左右），按下那一刻还要求**没搭着别的修饰键**（`bare`，`imk/modifiers.rs::bare_press` 判 ⌘⌥⌃ 与 Fn，Caps Lock 亮着不算），
   抬起时手上只剩这一个键位才命中；`FlagsChanged` 在 `imk/controller/mode.rs::handle_flags` 里经 `ModeState::modifier_flags` 喂给它，先比对 `KeyTap::is_held` 与聚合标志过滤重复的按下 / 抬起（重复抬起保留待定切换，重复按下不刷新时长），判定之后再用聚合标志 `resync` 对账
   （输入法可能在按住 Shift 时才被激活，漏掉抬起会留幽灵按下；对账必须在判定之后，否则抬起会被当成按下）。macOS 的 `ModeState` 从 `KeyTap::is_armed()` 读单击资格，用 `Instant` 记录按下时刻；抬起不超过 500 ms（含边界）才算短按，长按直接取消，不创建定时器。短按命中后再独立待定 150 ms：迟到的 KeyDown 若仍带原切换键标志就作废，否则在处理该 KeyDown 前确认；没有后续按键则定时确认。KeyDown 与其他修饰键事件会作废待定单击及其定时器；KeyDown 仍 `interrupt` 作废正按着的那次单击；输入源停用、配置变化、panic 善后会清理按下时间与待定单击，并注销定时器。定时回调核对定时器身份并用原客户端做组句收尾。共享 `KeyTap` 没有时长判定，Windows / Linux 的单击行为不变。
-  Caps Lock 只管大小写，状态项靠现成的 0.25 s 轮询带 ⇪；`[general] shift_letter = "compose"` 也**只认真正按住 Shift 打出的大写**（`imk/controller/text.rs` 要 `Modifiers.shift`），
+  Caps Lock 只管大小写，状态项靠现成的 0.25 s 轮询带 ⇪；共享配置默认值与新模板的 `[general] shift_letter` 均为 `"compose"`，旧配置缺项时也采用它，显式 `"passthrough"` 仍保留；
+  这项配置也**只认真正按住 Shift 打出的大写**（`imk/controller/text.rs` 要 `Modifiers.shift`），
   Caps Lock 送来的大写仍旧直接交给应用、不进组句。
   英文模式始终纯直通，`ModeState::passthrough()` 只看 `english`。
   默认 info 日志记录控制器身份、激活时的应用标识、修饰键标志与中英状态、失活时的单击 / 定时器状态，以及每次激活后的首个 KeyDown 路由；启动日志带包版本。用于对照客户端重建会话与切换事件，不记录普通键码、字符或组句内容。

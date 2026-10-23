@@ -23,7 +23,12 @@ fn setup() -> (Router, PathBuf) {
             FrequencyLearner::from_path(path.join("user.tsv")).unwrap(),
         ))
         .with_input_logger(Box::new(InputLog::open(path.join("input-log.jsonl"))));
-    (Router::new(engine, RouterConfig::default()), path)
+    // 固定临时英文输入策略，隐私断言不依赖 Shift 字母的产品默认值。
+    let config = RouterConfig {
+        shift_letter_compose: false,
+        ..RouterConfig::default()
+    };
+    (Router::new(engine, config), path)
 }
 fn privacy(router: &mut Router, id: u64, private: bool) {
     router.handle(ClientMessage::Privacy {

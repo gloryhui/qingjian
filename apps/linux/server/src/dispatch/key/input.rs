@@ -174,8 +174,8 @@ impl Router {
         }
     }
 
-    /// 中文模式：字母进拼音。缺省 Shift 大写是临时打英文——组句中先把拼音原样上屏、字母交给应用；
-    /// 配 `[general] shift_letter = "compose"` 时大写也收进缓冲区（Core 按小写匹配、原样上屏时还原大小写）。
+    /// 中文模式：字母进拼音。默认 compose 时 Shift 大写也进缓冲区（按小写匹配，原样上屏时还原大小写）；
+    /// 显式 passthrough 时先把拼音原样上屏、再把大写字母交给应用。
     /// 没在组句时的其他字符走全角标点（与 macOS 壳一致，组句中的标点仍进英文直输段）。
     fn apply_chinese(&mut self, c: char, event: &KeyEvent) -> Effect {
         // 注音模式下数字与 `- ; , . /` 就是键盘上的音节键，跟着进缓冲区。

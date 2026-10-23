@@ -248,9 +248,9 @@ emoji_candidates = false
 traditional = false
 # 中文模式下整段输入是英文词时（hello / key）是否让中文候选排第一、英文词第二；缺省 false：拼音不像话的输入英文词排第一
 chinese_first = false
-# 中文模式下按住 Shift 敲的字母：passthrough 拼音原样上屏、字母交给应用（缺省，与以前一致）/ compose 收进组句
+# 中文模式下按住 Shift 敲的字母：compose 收进组句（缺省）/ passthrough 拼音原样上屏、字母交给应用
 # 缓冲区参与匹配，这样 Cpan 与 cpan 一样能出「C盘」。英文模式与英文直输段（no-Way）不受影响
-shift_letter = "passthrough"
+shift_letter = "compose"
 # 内置英文模式：开着才能用单击切换键（[shortcut] switch_mode）与菜单 / 状态条按钮切到英文模式。
 # Caps Lock 亮着不再等于英文模式，它只管大小写
 # 关掉后青简保持中文模式，切换键与语言栏按钮都不再切过去；要打英文请用系统快捷键切到别的输入法（Windows 是 Win+Space）

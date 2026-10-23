@@ -23,6 +23,16 @@ fn partial_file_keeps_other_defaults() {
 }
 
 #[test]
+fn shift_letters_compose_when_omitted_and_preserve_explicit_passthrough() {
+    for text in ["", "[general]\npage_size = 5\n"] {
+        let config: Config = toml::from_str(text).unwrap();
+        assert!(config.general.shift_letter.compose());
+    }
+    let explicit: Config = toml::from_str("[general]\nshift_letter = \"passthrough\"\n").unwrap();
+    assert!(!explicit.general.shift_letter.compose());
+}
+
+#[test]
 fn emoji_candidates_default_off_and_parse_explicit_on() {
     assert!(!Config::default().general.emoji_candidates);
     let old: Config = toml::from_str("[general]\npage_size = 5\n").unwrap();

@@ -39,8 +39,10 @@ fn shuangpin_shift_mode_keys_respect_custom_bindings_and_english() {
     router.engine.set_shuangpin(None);
     assert_eq!(
         key(&mut router, b'I' as u32, Some('I'), normal).0,
-        KeyOutcome::Passthrough
+        KeyOutcome::Consumed
     );
+    assert_eq!(router.engine.composition().text(), "I");
+    assert!(!router.engine.expression_mode());
 }
 #[test]
 fn zhuyin_symbol_keys_and_tones_are_input_and_enter_selects() {

@@ -65,7 +65,7 @@ apps/linux/scripts/install.sh
 每页候选数、翻页键、学习、日志和辅助语言使用同一配置文件。`learning_language = "off"` 关闭中文候选的辅助语言释义与生词标记。系统面板外观由 Fcitx5 设置控制。
 随包的本地整句模型在你停顿后给整句候选重新排序，`[model] enabled = false` 可关闭；自己的 `.qjm` 放 `~/.local/share/qingjian/model/` 优先使用，见 [本地整句模型](../input/local-model.md)。
 
-`[general] shift_letter = "compose"` 让 Shift 大写字母参与中文组句，默认 `"passthrough"` 保持临时英文输入。
+`[general] shift_letter` 默认是 `"compose"`，让 Shift 大写字母参与中文组句；可设为 `"passthrough"` 使用临时英文输入。
 `scheme = "zhuyin"` 启用大千注音；双拼下 `Shift + V` / `Shift + U` 可进入表达式 / 码点输入。
 数字没有对应候选时继续输入，英文直输内容以空格结束时保留空格；英文候选开启后可用数字、翻页键、空格或 Tab 选词。
 具体规则见 [按键与快捷键](keys.md#Linux（Fcitx5）)。

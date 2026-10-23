@@ -21,7 +21,8 @@ pub struct InputSettings {
     pub english_mode: bool,
 
     /// 中文模式下 Shift+字母进组句（`[general] shift_letter = "compose"`）。DLL 据此决定没在组句时
-    /// 按住 Shift 敲的字母吃不吃：缺省交给应用，开着时送 Server 起一段组句（`⇧C` 接 `pan` 出「C盘」）。
+    /// 按住 Shift 敲的字母吃不吃：开着时送 Server 起一段组句（`⇧C` 接 `pan` 出「C盘」）。
+    /// 新会话使用 Server 的实际配置；缺字段的旧协议仍按 false 解析。
     #[serde(default)]
     pub shift_letter_compose: bool,
 }

@@ -229,7 +229,10 @@ fn minus_equals_page_keys_preserve_expression_input() {
 
 #[test]
 fn shift_uppercase_while_composing_commits_raw_first() {
-    let mut router = router();
+    let mut router = router_with(RouterConfig {
+        shift_letter_compose: false,
+        ..RouterConfig::default()
+    });
     type_letters(&mut router, "ni");
     // 中文模式按住 Shift 打大写字母：拼音原样上屏，字母跟在后面一起插。
     let shifted = KeyModifiers {

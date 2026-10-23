@@ -301,7 +301,7 @@ fn shift_letters_join_the_buffer_only_when_configured() {
         }
     };
 
-    // 缺省 `shift_letter = "passthrough"`：壳直接把大写字母交给应用，这一路本来就不会走到；
+    // Core 尚未应用平台配置时不接收 Shift 大写；passthrough 的壳也会直接把大写字母交给应用，根本不会走到这里。
     // 万一走到也不该被当成拼音去匹配（所以「C盘」出不来）
     type_cpan(&mut engine);
     assert_ne!(engine.query().unwrap().candidates.items[0].text, "C盘");

@@ -4,12 +4,12 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ShiftLetter {
-    /// 拼音原样上屏、这个字母交给应用——两个平台原本的行为。缺省：换掉老用户的习惯得让人自己选。
-    #[default]
+    /// 拼音原样上屏、这个字母交给应用；显式选择时保留临时英文输入行为。
     Passthrough,
 
     /// 字母进组句缓冲区，按小写参与匹配、原样上屏（回车 / 无候选）时还原大写，
     /// 所以 `Cpan` 与 `cpan` 一样出「C盘」。英文模式与英文直输段保持原样大小写。
+    #[default]
     Compose,
 }
 
@@ -45,7 +45,7 @@ mod tests {
 
     #[test]
     fn keys_round_trip_through_lowercase() {
-        assert_eq!(ShiftLetter::default(), ShiftLetter::Passthrough);
+        assert_eq!(ShiftLetter::default(), ShiftLetter::Compose);
         assert_eq!(ShiftLetter::Passthrough.key(), "passthrough");
         assert_eq!(ShiftLetter::Compose.key(), "compose");
         assert!(ShiftLetter::Compose.compose());
