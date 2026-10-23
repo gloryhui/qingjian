@@ -4,8 +4,8 @@ use objc2::MainThreadMarker;
 use objc2::rc::Retained;
 use objc2_app_kit::{
     NSAppearance, NSAppearanceCustomization, NSAppearanceNameAqua, NSAppearanceNameDarkAqua,
-    NSBackingStoreType, NSColor, NSEvent, NSPanel, NSScreen, NSWindowCollectionBehavior,
-    NSWindowLevel, NSWindowStyleMask,
+    NSApplication, NSBackingStoreType, NSColor, NSEvent, NSPanel, NSScreen,
+    NSWindowCollectionBehavior, NSWindowLevel, NSWindowStyleMask,
 };
 use objc2_foundation::{NSPoint, NSRect, NSSize};
 use qingjian_platform::{CandidateRenderer, LayoutMode, ThemeMode};
@@ -74,7 +74,10 @@ impl CandidateWindow {
         self.panel.setFrame_display(NSRect::new(origin, size), true);
         self.order_front_on_active_space();
         if !self.panel.isVisible() {
-            tracing::warn!(?anchor, ?origin, "候选窗口 orderFront 之后仍不可见");
+            let app = NSApplication::sharedApplication(self.mtm);
+            tracing::warn!(?anchor, ?origin, ?size, number = self.panel.windowNumber(),
+                on_active_space = self.panel.isOnActiveSpace(), hidden = app.isHidden(),
+                policy = ?app.activationPolicy(), "候选窗口 orderFront 之后仍不可见");
         } else {
             tracing::debug!(
                 ?anchor,
@@ -89,15 +92,23 @@ impl CandidateWindow {
         self.panel.orderOut(None);
     }
 
-    /// 排到最前，并确认真在当前 Space 上；不在就换一块新面板。
+    /// 恢复显示并排到最前，确认可见且处于当前 Space；失败则换一块新面板。
     ///
     /// collection behavior 是「所有 Space + 全屏辅助」，可 macOS 26 上 WindowServer 只把面板绑到它创建时已有的 Space：
     /// 之后新开的全屏 Space（Zed 全屏就是一个）里没有它，候选框留在桌面那个 Space。用 CGS 查过，面板的 Space 列表只有桌面，
     /// 而同样设置新建的面板会绑到全部 Space；重设 collection behavior、收起再排前都不会让它重算，只有新建有用。
-    /// `isOnActiveSpace` 能反映这个状态，所以每次显示后查一下，不在就把内容视图搬到新面板上。
+    /// 每次显示后同时检查可见性与 Space 归属；不可见时即使 Space 正确，也需重建面板。
     fn order_front_on_active_space(&mut self) {
+        // 安装器或“隐藏其他应用”可能隐藏整个输入法；只恢复窗口不能解除应用隐藏。
+        let app = NSApplication::sharedApplication(self.mtm);
+        if app.isHidden() {
+            app.unhideWithoutActivation();
+            tracing::info!(hidden = app.isHidden(), "候选显示前已恢复被隐藏的输入法");
+        }
+        // orderFront 负责将已 orderOut 的窗口重新加入显示列表，再抬到其他应用前方。
+        self.panel.orderFront(None);
         self.panel.orderFrontRegardless();
-        if self.panel.isOnActiveSpace() {
+        if self.panel.isVisible() && self.panel.isOnActiveSpace() {
             return;
         }
         let frame = self.panel.frame();
@@ -105,11 +116,13 @@ impl CandidateWindow {
         let panel = build_panel(self.mtm, &self.view, self.panel_level);
         panel.setAppearance(self.appearance.as_deref());
         panel.setFrame_display(frame, true);
+        panel.orderFront(None);
         panel.orderFrontRegardless();
         self.panel = panel;
         tracing::warn!(
-            recovered = self.panel.isOnActiveSpace(),
-            "候选窗口不在当前 Space，已换新面板"
+            recovered = self.panel.isVisible() && self.panel.isOnActiveSpace(),
+            visible = self.panel.isVisible(),
+            "候选窗口不可见或不在当前 Space，已换新面板"
         );
     }
 

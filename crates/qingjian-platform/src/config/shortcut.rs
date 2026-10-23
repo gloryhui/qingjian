@@ -1,3 +1,5 @@
+//! 输入模式、候选与翻译快捷键配置。
+
 use qingjian_core::ModeKeys;
 use serde::{Deserialize, Serialize};
 
@@ -25,6 +27,9 @@ pub struct ShortcutConfig {
     /// 把应用里选中的文字译成学习语言（需要云服务开着）。
     pub translate_selection: KeyCombo,
 
+    /// 上屏当前高亮候选的第一条译词（macOS 缺省 ⌥Enter）。
+    pub commit_translation: KeyCombo,
+
     /// 数字键配这些修饰键：删掉候选（用户词整个删掉，词库词清掉对它的学习）。
     pub delete_candidate: Modifiers,
 }
@@ -42,6 +47,7 @@ impl Default for ShortcutConfig {
             translation,
             translation_second,
             translate_selection: KeyCombo::TRANSLATE_DEFAULT,
+            commit_translation: KeyCombo::COMMIT_TRANSLATION_DEFAULT,
             delete_candidate: Modifiers::SHIFT,
         }
     }

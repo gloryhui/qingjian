@@ -1,8 +1,15 @@
 //! 形码查询：编码按前缀查码表，没有切分、没有整句；以及与拼音的混输。
 
+use crate::engine::Learner;
 use std::collections::HashSet;
 
-use super::*;
+use super::Query;
+use crate::candidate::{Candidate, CandidateKind, CandidateList};
+use crate::engine::{Engine, MAX_CANDIDATES, Timings, choice_key};
+use crate::parser::ParseError;
+use crate::ranking::{self, Scored};
+use crate::sentence;
+use std::time::Instant;
 
 impl Engine {
     /// 形码方案（五笔）的候选：编码打全的词排在同前缀的更长编码词前面，其余按词频与上下文。
@@ -72,6 +79,7 @@ impl Engine {
             })
             .collect();
         let query = Query {
+            selected: String::new(),
             // 形码没有切分：preedit 的显示串靠 `tail` 原样带出去（见 `Query::marked_text`）
             segmentations: Vec::new(),
             candidates: CandidateList { items },

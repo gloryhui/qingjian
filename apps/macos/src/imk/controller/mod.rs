@@ -3,18 +3,18 @@
 //! 只做两件事：把按键翻译成 Engine 的调用，把 Engine 返回的候选交给候选窗口。
 //! **这里不允许出现排序、词库或翻译逻辑。** 会话状态（候选、高亮、页码）在 [`crate::host::Session`]。
 
+use std::cell::Cell;
+
 use objc2::rc::{Allocated, Retained};
-use objc2::runtime::{AnyObject, Sel};
-use objc2::{define_class, msg_send, sel};
+use objc2::runtime::AnyObject;
+use objc2::{DefinedClass, define_class, msg_send, sel};
 use objc2_app_kit::{NSEvent, NSEventMask, NSEventModifierFlags, NSEventType, NSMenu};
 use objc2_foundation::{NSObjectProtocol, NSTimer};
 use objc2_input_method_kit::{IMKInputController, IMKServer};
-use qingjian_core::Candidate;
 use qingjian_platform::Modifiers;
 
 use self::route::Route;
-use super::{TextClient, catch_panic, recover_from_panic, secure_input};
-use crate::candidates::Preedit;
+use super::{TextClient, catch_panic, recover_from_panic};
 use crate::host;
 use crate::menubar;
 
@@ -43,7 +43,8 @@ define_class!(
     #[unsafe(super(IMKInputController))]
     // 名字要和 Info.plist 的 InputMethodServerControllerClass 一致
     #[name = "QingjianInputController"]
-    #[ivars = ()]
+    // true 表示本次激活尚未记录首个 KeyDown 的路由。
+    #[ivars = Cell<bool>]
     pub struct QingjianInputController;
 
     impl QingjianInputController {
@@ -62,7 +63,7 @@ define_class!(
             client: Option<&AnyObject>,
         ) -> Option<Retained<Self>> {
             tracing::info!("新建输入会话");
-            let this = this.set_ivars(());
+            let this = this.set_ivars(Cell::new(true));
             unsafe { msg_send![super(this), initWithServer: server, delegate: delegate, client: client] }
         }
 
@@ -136,14 +137,19 @@ define_class!(
 
         #[unsafe(method(activateServer:))]
         fn activate_server(&self, sender: Option<&AnyObject>) {
-            tracing::info!("activateServer");
             let done = catch_panic("activateServer", || {
+                self.ivars().set(true);
                 // 用户要往 [apps] 里加应用时，从这条日志抄 bundle identifier
                 let bundle = sender.and_then(|s| TextClient::new(s).bundle_identifier());
-                if let Some(bundle) = &bundle {
-                    tracing::debug!(%bundle, "当前应用");
-                }
                 host::with(|h| {
+                    tracing::info!(
+                        controller = ?std::ptr::from_ref(self),
+                        ?bundle,
+                        english = h.mode.english(),
+                        pending = h.mode.has_pending(),
+                        switch_pressed = h.mode.switch_pressed(),
+                        "activateServer"
+                    );
                     h.engine.set_application(bundle);
                     h.refresh_text_replacements();
                     h.reload_config_if_changed();
@@ -172,9 +178,18 @@ define_class!(
 
         #[unsafe(method(deactivateServer:))]
         fn deactivate_server(&self, sender: Option<&AnyObject>) {
-            tracing::info!("deactivateServer");
             let client = sender.map(TextClient::new);
             let done = catch_panic("deactivateServer", || {
+                host::with(|h| {
+                    tracing::info!(
+                        controller = ?std::ptr::from_ref(self),
+                        english = h.mode.english(),
+                        pending = h.mode.has_pending(),
+                        switch_pressed = h.mode.switch_pressed(),
+                        timer_active = h.pending_switch.is_some(),
+                        "deactivateServer"
+                    );
+                });
                 if let Some(client) = client {
                     self.commit_raw(client);
                 }
@@ -246,17 +261,31 @@ impl QingjianInputController {
     /// 英文 KeyDown 只作废修饰键单击并放行；中文模式才识别应用、快捷键与文本。
     fn dispatch_event(&self, event: &NSEvent, client: TextClient<'_>) -> bool {
         if event.r#type() == NSEventType::KeyDown {
+            let first_key = self.ivars().replace(false);
             // 先用系统给这次 KeyDown 的修饰标志消解待定单击；不读取字符。
             // Shift 抬起回调可能先于组合键 KeyDown 到达，仍带 Shift 的 KeyDown 必须作废那次切换。
             let flags = event.modifierFlags();
             let flipped = host::with(|h| {
+                let pending = h.mode.has_pending();
                 if let Some(timer) = h.pending_switch.take() {
                     timer.invalidate();
                 }
-                h.mode.key_down(
+                let flipped = h.mode.key_down(
                     flags.contains(NSEventModifierFlags::Shift),
                     flags.contains(NSEventModifierFlags::Control),
-                )
+                );
+                if first_key || pending {
+                    tracing::info!(
+                        controller = ?std::ptr::from_ref(self),
+                        ?flags,
+                        first_key,
+                        pending,
+                        flipped,
+                        english = h.mode.english(),
+                        "输入会话按键路由"
+                    );
+                }
+                flipped
             })
             .unwrap_or(false);
             if flipped {
@@ -314,8 +343,25 @@ impl QingjianInputController {
         // 只在组句中认：不在组句时 ⇧4 就是 `$`，得走下面的标点转换（中文模式出 ￥、⇧6 出 ……、⇧1 出 ！），
         // 以前在这里被截走后原样还给应用，全角转换就没机会做了。
         // 表达式模式（`v2^3`）里 ⇧+数字打的是 `^ * ( )`，不当快捷键
-        let composing = host::with(|h| !h.engine.composition().is_empty()).unwrap_or(false);
+        let composing = host::with(|h| h.engine.is_composing()).unwrap_or(false);
         let expression = composing && host::with(|h| h.engine.expression_mode()).unwrap_or(false);
+        if composing
+            && host::with(|h| {
+                let typed = event
+                    .charactersIgnoringModifiers()
+                    .map(|text| text.to_string());
+                super::modifiers::matches_combo(
+                    h.commit_translation_keys,
+                    pressed,
+                    key,
+                    typed.as_deref(),
+                )
+            })
+            .unwrap_or(false)
+        {
+            return self.commit_highlighted_translation(client);
+        }
+
         if composing
             && !expression
             && !pressed.is_empty()
@@ -376,6 +422,6 @@ impl QingjianInputController {
         let combo = host::with(|h| h.translate_keys).unwrap_or_default();
         pressed == combo.modifiers
             && typed.as_deref().and_then(|t| t.chars().next()) == Some(combo.key)
-            && !host::with(|h| !h.engine.composition().is_empty()).unwrap_or(false)
+            && !host::with(|h| h.engine.is_composing()).unwrap_or(false)
     }
 }

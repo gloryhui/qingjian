@@ -1,6 +1,10 @@
 //! 查询与呈现：刷新候选、画候选窗、整句补全、翻页与高亮。
 
-use super::*;
+use super::{QingjianInputController, RESCORE_LOOKBACK};
+use crate::candidates::Preedit;
+use crate::host;
+use crate::imk::{TextClient, secure_input};
+use qingjian_core::Candidate;
 
 impl QingjianInputController {
     /// 按当前缓冲区重新查候选、更新 marked text，回到第一页并重画候选窗口。
@@ -28,8 +32,9 @@ impl QingjianInputController {
                 h.engine.set_rescoring_context(before);
             }
             // 查询失败（整段切不动）时退回显示原始字母
-            let mut marked = h.engine.composition().text().to_owned();
-            let mut cursor = h.engine.composition().cursor();
+            let raw = h.engine.raw_preedit();
+            let mut cursor = raw.text[..raw.cursor_bytes].chars().count();
+            let mut marked = raw.text;
             let mut preedit = Preedit::plain(&marked, cursor);
             let candidates = h
                 .engine
@@ -129,7 +134,7 @@ impl QingjianInputController {
         let Some(text) = host::with(|h| h.sentence.take()).flatten() else {
             return false;
         };
-        host::with(|h| h.engine.accept_prediction(&text));
+        let text = host::with(|h| h.engine.accept_prediction(&text)).unwrap_or(text);
         tracing::debug!(%text, "接受整句补全");
         client.insert_text(&text);
         self.refresh(client);

@@ -13,6 +13,7 @@ mod learning;
 mod lookup;
 mod privacy;
 mod raw;
+mod selection;
 mod shuangpin;
 mod zhuyin;
 

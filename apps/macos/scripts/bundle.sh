@@ -216,6 +216,10 @@ if [[ "$MODE" == "--pkg" ]]; then
   pkgbuild --analyze --root "$PKG_DIR/root" "$PKG_DIR/component.plist" >/dev/null
   /usr/libexec/PlistBuddy -c "Set :0:BundleIsRelocatable false" "$PKG_DIR/component.plist" 2>/dev/null || \
     /usr/libexec/PlistBuddy -c "Add :0:BundleIsRelocatable bool false" "$PKG_DIR/component.plist"
+  if [[ "$TEST_BUILD" == 1 ]]; then
+    # squash 合并后的提交数可能比待测分支少；测试包必须安装用户明确选择的版本。
+    /usr/libexec/PlistBuddy -c "Set :0:BundleIsVersionChecked false" "$PKG_DIR/component.plist"
+  fi
   pkgbuild --root "$PKG_DIR/root" --component-plist "$PKG_DIR/component.plist" \
     --install-location "/Library/Input Methods" --scripts "$PKG_DIR/scripts" \
     --identifier "$PACKAGE_ID" --version "$PKG_VERSION" "$PKG_DIR/$APP_NAME-component.pkg" >/dev/null

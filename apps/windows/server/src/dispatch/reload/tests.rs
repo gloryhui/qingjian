@@ -5,7 +5,7 @@ use std::time::{Duration, Instant, SystemTime};
 
 use qingjian_core::Engine;
 use qingjian_dictionary::{Dictionary, import};
-use qingjian_platform::Config;
+use qingjian_platform::{Config, extra_dictionaries};
 
 use super::CONFIG_POLL_INTERVAL;
 use crate::dispatch::{DataDirs, Router, RouterConfig};
@@ -31,6 +31,7 @@ fn import_replace_and_remove_without_config_changes() {
     let config_path = dir.join("config.toml");
     std::fs::write(&config_path, "").unwrap();
     let config = Config::load(&config_path).unwrap();
+    let builtin_count = extra_dictionaries::load(None, None, &config.dictionaries).len();
     let original_config = std::fs::read(&config_path).unwrap();
     let mut router = Router::new(Engine::new(Dictionary::default()), RouterConfig::default());
     router.watch_config(
@@ -50,9 +51,9 @@ fn import_replace_and_remove_without_config_changes() {
     modified_at(&imported.path, 100);
     poll(&mut router);
     let dictionaries = router.engine.extra_dictionaries();
-    assert_eq!(dictionaries.len(), 1);
+    assert_eq!(dictionaries.len(), builtin_count + 1);
     assert_eq!(
-        dictionaries[0].lookup(&["he", "tong", "fa"], false)[0].text,
+        dictionaries[builtin_count].lookup(&["he", "tong", "fa"], false)[0].text,
         "合同法"
     );
 
@@ -67,7 +68,8 @@ fn import_replace_and_remove_without_config_changes() {
     );
     poll(&mut router);
     assert_eq!(
-        router.engine.extra_dictionaries()[0].lookup(&["he", "tong", "fa"], false)[0].frequency,
+        router.engine.extra_dictionaries()[builtin_count].lookup(&["he", "tong", "fa"], false)[0]
+            .frequency,
         121
     );
 
@@ -79,7 +81,7 @@ fn import_replace_and_remove_without_config_changes() {
     .unwrap();
     import::import(&source, &dir.join("dicts")).unwrap();
     poll(&mut router);
-    let dictionary = &router.engine.extra_dictionaries()[0];
+    let dictionary = &router.engine.extra_dictionaries()[builtin_count];
     assert!(dictionary.lookup(&["he", "tong", "fa"], false).is_empty());
     assert_eq!(
         dictionary.lookup(&["min", "fa", "dian"], false)[0].text,
@@ -95,7 +97,7 @@ fn import_replace_and_remove_without_config_changes() {
     std::fs::create_dir_all(&removed).unwrap();
     std::fs::rename(&imported.path, removed.join("law.qj")).unwrap();
     poll(&mut router);
-    assert!(router.engine.extra_dictionaries().is_empty());
+    assert_eq!(router.engine.extra_dictionaries().len(), builtin_count);
     assert_eq!(std::fs::read(&config_path).unwrap(), original_config);
     drop(router);
     std::fs::remove_dir_all(&dir).unwrap();
@@ -109,6 +111,7 @@ fn dictionary_changes_do_not_retry_broken_config() {
     std::fs::write(&config_path, "[general]\npage_size = 5\n").unwrap();
     modified_at(&config_path, 100);
     let config = Config::load(&config_path).unwrap();
+    let builtin_count = extra_dictionaries::load(None, None, &config.dictionaries).len();
     let mut router = Router::new(
         Engine::new(Dictionary::default()),
         RouterConfig::from(&config),
@@ -132,7 +135,7 @@ fn dictionary_changes_do_not_retry_broken_config() {
     let imported = import::import(&source, &dir.join("dicts")).unwrap();
     poll(&mut router);
     assert_eq!(router.config.page_size, 5);
-    assert_eq!(router.engine.extra_dictionaries().len(), 1);
+    assert_eq!(router.engine.extra_dictionaries().len(), builtin_count + 1);
 
     // 保持坏配置的 mtime，以可观察的配置值确认后续轮询不会重新读它。
     std::fs::write(&config_path, "[general]\npage_size = 9\n").unwrap();
@@ -144,7 +147,7 @@ fn dictionary_changes_do_not_retry_broken_config() {
     std::fs::rename(&imported.path, removed.join("law.qj")).unwrap();
     poll(&mut router);
     assert_eq!(router.config.page_size, 5);
-    assert!(router.engine.extra_dictionaries().is_empty());
+    assert_eq!(router.engine.extra_dictionaries().len(), builtin_count);
 
     modified_at(&config_path, 300);
     poll(&mut router);

@@ -4,7 +4,9 @@
 可选的「网盘：[名称](链接)」一行放 GitHub 下载不方便时的网盘地址，官网单独显示成按钮，不算更新条目。
 发版时 CI 从这里取该版本的说明写进 GitHub Release，并汇总成官网下载页用的 `releases.json`（`tools/release/releases_json.py`）。
 
-## 0.1.5 · 未发布 · stable
+## 0.1.8 · 未发布 · stable
+
+- macOS：升级安装后自动启动新版青简；修复 Codex 输入框中短按 Shift 无法切换中英文的问题。
 
 ## 0.1.4 · 2026-09-24 · stable
 

@@ -11,7 +11,7 @@ impl Engine {
     /// 未知键沿用解码器聚到末尾的行为，光标跟随其输出位置，可能不单调。
     /// 首位始终为 0，末位始终为完整文本末尾。
     pub fn raw_preedit(&self) -> RawPreedit {
-        if self.is_zhuyin_mode() && !self.english_mode {
+        let mut preedit = if self.is_zhuyin_mode() && !self.english_mode {
             let (decoded, cursor_bytes) =
                 zhuyin::decode_at(self.composition.text(), self.composition.cursor());
             RawPreedit {
@@ -25,6 +25,10 @@ impl Engine {
                 cursor_bytes -= 1;
             }
             RawPreedit { text, cursor_bytes }
-        }
+        };
+        let selected = self.selected_text();
+        preedit.cursor_bytes += selected.len();
+        preedit.text.insert_str(0, &selected);
+        preedit
     }
 }

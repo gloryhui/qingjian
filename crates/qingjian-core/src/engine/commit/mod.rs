@@ -67,14 +67,18 @@ impl Engine {
             .as_ref()
             .and_then(|t| t.senses().get(sense))
             .map(|s| s.text.clone())?;
+        let mut selected = self.commit_selected();
         self.commit_with(candidate, InputSource::Translation, Some(sense));
-        Some(text)
+        selected.push_str(&text);
+        Some(selected)
     }
 
     /// 候选比输入短时（`kaifazhe` 选了 开发），剩余拼音留在缓冲区，壳应接着 [`Self::query`]。
     /// 候选的最后一个音节比输入长时（`kaif` 选了 开发），把输入吃完。
     pub fn commit(&mut self, candidate: &Candidate) -> String {
-        self.commit_with(candidate, InputSource::from(candidate.kind), None)
+        let mut text = self.commit_selected();
+        text.push_str(&self.commit_with(candidate, InputSource::from(candidate.kind), None));
+        text
     }
 
     /// [`Self::commit`] 的内部形式：`source` 写进输入日志（上屏译词时不是候选本身），

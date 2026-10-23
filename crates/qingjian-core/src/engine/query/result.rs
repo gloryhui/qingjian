@@ -47,6 +47,9 @@ use crate::engine::{AuxSegment, MarkedKind, MarkedSegment};
 /// 不带译文的候选查询结果。
 #[derive(Debug, Clone, Default)]
 pub struct Query {
+    /// 尚未上屏的已选词，显示在剩余拼音之前。
+    pub selected: String,
+
     /// 参与候选生成的所有切分，索引 0 为首选切分。
     pub segmentations: Vec<Segmentation>,
 
@@ -112,7 +115,7 @@ impl Query {
     /// 双拼模式且 `shuangpin_raw_preedit` 开启时，返回原始按键（如 `kdfa`）。
     pub fn marked_text(&self) -> String {
         if self.shuangpin_raw_preedit {
-            return self.text.clone();
+            return format!("{}{}", self.selected, self.text);
         }
         self.marked_segments()
             .iter()
@@ -123,6 +126,21 @@ impl Query {
     /// [`Self::marked_text`] 的分段形式：敲的拼音一段（`Typed`），光标后剩下的拼音连同前面的 `'` 一段（`Rest`）。
     /// 壳按段画样式；[`Self::segments_cursor`] 的位置按各段拼接后的字符数算。
     pub fn marked_segments(&self) -> Vec<MarkedSegment> {
+        let mut segments = self.remaining_segments();
+        if !self.selected.is_empty() {
+            segments.insert(
+                0,
+                MarkedSegment::new(self.selected.clone(), MarkedKind::Typed),
+            );
+        }
+        segments
+    }
+
+    pub fn segments_cursor(&self) -> usize {
+        self.selected.chars().count() + self.remaining_cursor()
+    }
+
+    fn remaining_segments(&self) -> Vec<MarkedSegment> {
         let mut segments = match &self.correction {
             Some(correction) => correction.marked_segments(),
             None => Vec::with_capacity(2),
@@ -159,7 +177,7 @@ impl Query {
     }
 
     /// 光标在 [`Self::marked_segments`] 拼接文本里的字符下标（候选窗口顶部拼音行使用）。
-    pub fn segments_cursor(&self) -> usize {
+    fn remaining_cursor(&self) -> usize {
         // 纠错生效、解码时显示串与敲的不一样长，作用域又总在光标前：光标就在敲的部分末尾
         // （光标在开头时作用域是整段，光标仍在开头）
         if self.decoded_keys && self.cursor == 0 {
@@ -168,7 +186,7 @@ impl Query {
         // 辅码态光标也总在末尾：触发键与码段都拼在最后
         if self.correction.is_some() || self.decoded_keys || self.aux.is_some() {
             return self
-                .marked_segments()
+                .remaining_segments()
                 .iter()
                 .filter(|s| s.kind != MarkedKind::Rest)
                 .map(|s| s.text.chars().count())
@@ -180,7 +198,7 @@ impl Query {
             .count();
         let after_apostrophe = self.text[..self.cursor.min(self.text.len())].ends_with('\'');
         let segments_text: String = self
-            .marked_segments()
+            .remaining_segments()
             .iter()
             .map(|s| s.text.as_str())
             .collect();
@@ -202,9 +220,10 @@ impl Query {
     /// 光标在 [`Self::marked_text`] 里的字符下标（给平台层传给宿主应用输入框用的，所以按字符算，不是字节）。
     pub fn marked_cursor(&self) -> usize {
         if self.shuangpin_raw_preedit {
-            return self.text[..self.cursor.min(self.text.len())]
-                .chars()
-                .count();
+            return self.selected.chars().count()
+                + self.text[..self.cursor.min(self.text.len())]
+                    .chars()
+                    .count();
         }
         self.segments_cursor()
     }

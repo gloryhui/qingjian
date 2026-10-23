@@ -51,5 +51,6 @@ fn tap_shift(mode: &mut ModeState) -> bool {
 
 mod behavior;
 mod control;
+mod duplicates;
 mod duration;
 mod flow;

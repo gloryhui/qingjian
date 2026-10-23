@@ -183,6 +183,24 @@ impl Composition {
         };
     }
 
+    /// 分离已选部分，保留大小写与分隔符；尾段光标沿用消耗前的位置。
+    pub(crate) fn take_prefix(&mut self, len: usize) -> Self {
+        let len = len.min(self.buffer.len());
+        let mut prefix = self.clone();
+        prefix.buffer.truncate(len);
+        prefix.shifted.truncate(self.char_index(len));
+        prefix.move_end();
+        self.drain_prefix(len);
+        prefix
+    }
+
+    /// 恢复暂存的原始按键，尾段及其光标相对位置不变。
+    pub(crate) fn prepend(&mut self, prefix: &Self) {
+        self.buffer.insert_str(0, &prefix.buffer);
+        self.shifted.splice(0..0, prefix.shifted.iter().copied());
+        self.cursor += prefix.buffer.len();
+    }
+
     /// 吃掉整个作用域（云端词 / 英文词 / 整句对应的是整个作用域）。
     pub fn drain_scope(&mut self) {
         let len = self.scope().len();

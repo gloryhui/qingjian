@@ -11,6 +11,9 @@ pub struct EngineSession {
     /// 拼音与光标位置。
     composition: Composition,
 
+    /// 尚未确认的分段选词。
+    selected: Vec<super::selection::Selected>,
+
     /// 当前中英文模式。
     english_mode: bool,
 
@@ -58,6 +61,7 @@ impl Engine {
         self.cancel_prediction();
         self.set_rescoring_context(None);
         std::mem::swap(&mut self.composition, &mut session.composition);
+        std::mem::swap(&mut self.selected, &mut session.selected);
         std::mem::swap(&mut self.english_mode, &mut session.english_mode);
         std::mem::swap(&mut self.punctuation, &mut session.punctuation);
         std::mem::swap(&mut self.recent_commits, &mut session.recent_commits);

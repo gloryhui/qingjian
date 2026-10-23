@@ -38,8 +38,17 @@ impl Host {
         self.translation_keys = config.shortcut.translation_keys();
         self.delete_keys = config.shortcut.delete_keys();
         self.translate_keys = config.shortcut.translate_selection;
+        self.commit_translation_keys = config.shortcut.commit_translation;
         self.page_size = config.general.page_size();
         self.cloud_slots = config.predict.slots;
+        let reserved = if config.predict.enabled {
+            self.cloud_slots.min(self.page_size)
+        } else {
+            0
+        };
+        self.engine.set_word_candidate_limit(Some(
+            self.page_size.saturating_mul(2).saturating_sub(reserved),
+        ));
         self.page_keys = config.general.page_keys();
         self.preedit_mode = config.general.preedit;
         // 中英模式：切换键与总开关来自配置，模式本身是输入法自己记的那一份

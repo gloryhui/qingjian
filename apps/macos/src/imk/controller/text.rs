@@ -24,7 +24,7 @@ impl QingjianInputController {
         modifiers: Modifiers,
     ) -> bool {
         tracing::debug!(%text, "inputText");
-        let composing = host::with(|h| !h.engine.composition().is_empty()).unwrap_or(false);
+        let composing = host::with(|h| h.engine.is_composing()).unwrap_or(false);
         let [byte] = text.as_bytes() else {
             // 多字符文本（如输入法联动、粘贴）：先把当前候选上屏，再交给应用
             if composing {

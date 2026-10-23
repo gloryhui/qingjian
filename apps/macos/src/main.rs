@@ -14,7 +14,7 @@ mod menubar;
 mod preferences;
 
 use objc2::{AnyThread, ClassType, MainThreadMarker};
-use objc2_app_kit::NSApplication;
+use objc2_app_kit::{NSApplication, NSApplicationActivationPolicy};
 use objc2_foundation::NSString;
 use objc2_input_method_kit::IMKServer;
 
@@ -45,7 +45,7 @@ fn main() {
         tracing::error!(%info, %backtrace, "panic");
     }));
     let info = app::BundleInfo::from_main_bundle();
-    tracing::info!(connection = %info.connection_name, bundle = %info.identifier, "启动");
+    tracing::info!(connection = %info.connection_name, bundle = %info.identifier, version = %info.version, "启动");
 
     // define_class! 的类在首次调用 class() 时才注册到 ObjC 运行时，而 IMKServer 初始化时就会按
     // Info.plist 里的类名查找；找不到会静默退回基类 IMKInputController，表现为按键全部透传。
@@ -54,6 +54,13 @@ fn main() {
     tracing::info!(class = %controller_class.name().to_string_lossy(), "控制器类已注册");
 
     let mtm = MainThreadMarker::new().expect("输入法入口必须在主线程");
+    // 后台输入法仍需显示候选与设置窗口；Accessory 不显示 Dock 图标，也不会主动抢焦点。
+    let app = NSApplication::sharedApplication(mtm);
+    if !app.setActivationPolicy(NSApplicationActivationPolicy::Accessory) {
+        tracing::error!(policy = ?app.activationPolicy(), "无法启用输入法窗口显示");
+        return;
+    }
+    tracing::info!(policy = ?app.activationPolicy(), "输入法窗口显示已启用");
     if let Err(error) = host::init(mtm, &info) {
         tracing::error!(%error, "Engine 初始化失败");
         std::process::exit(1);
@@ -73,5 +80,5 @@ fn main() {
         );
         std::process::exit(1);
     };
-    NSApplication::sharedApplication(mtm).run();
+    app.run();
 }

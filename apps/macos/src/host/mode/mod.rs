@@ -56,8 +56,48 @@ impl ModeState {
 
     /// 一次物理修饰键按下 / 抬起：命中单击先待定，返回是否需要安排确认定时器。
     /// 有些客户端的组合键 KeyDown 比 Shift 抬起事件晚到，不能在抬起时直接切模式。
+    #[cfg(test)]
     pub fn modifier_event(&mut self, event: ModifierEvent) -> bool {
         self.modifier_event_at(event, Instant::now())
+    }
+
+    /// IMK 客户端可能重复投递 FlagsChanged；相同键位和按下状态不能再翻一次键位记录。
+    pub fn modifier_flags(
+        &mut self,
+        event: ModifierEvent,
+        shift_held: bool,
+        control_held: bool,
+    ) -> bool {
+        self.modifier_flags_at(event, shift_held, control_held, Instant::now())
+    }
+
+    fn modifier_flags_at(
+        &mut self,
+        event: ModifierEvent,
+        shift_held: bool,
+        control_held: bool,
+        now: Instant,
+    ) -> bool {
+        if let Some(key) = event.switch.filter(|key| self.switch_keys.contains(*key)) {
+            let held = match key {
+                SwitchKey::Shift => shift_held,
+                SwitchKey::Control => control_held,
+                SwitchKey::CtrlAltSpace => false,
+            };
+            if self.tap.is_held(key, event.slot) == held {
+                if held && !event.bare {
+                    self.interrupt();
+                    self.pending = None;
+                }
+                // 两只 Shift 同时按着时，先抬起的一只聚合标志仍亮着；最后全部抬起再清键位。
+                // 此时单击资格早已被第二只 Shift 作废，不会凭空产生一次切换。
+                self.resync(shift_held, control_held);
+                return false;
+            }
+        }
+        let pending = self.modifier_event_at(event, now);
+        self.resync(shift_held, control_held);
+        pending
     }
 
     /// 可注入单调时间的判定内核，供状态机测试精确覆盖时长边界。
@@ -109,6 +149,11 @@ impl ModeState {
 
     pub fn has_pending(&self) -> bool {
         self.pending.is_some()
+    }
+
+    /// 诊断客户端切焦点时，区分正在按下的切换键与抬起后待确认的单击。
+    pub fn switch_pressed(&self) -> bool {
+        self.tap.is_armed()
     }
 
     /// 输入源已停用，待定单击不能在旧客户端上完成。

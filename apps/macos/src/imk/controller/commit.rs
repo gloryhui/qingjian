@@ -1,6 +1,8 @@
 //! 上屏：高亮候选、指定候选、拼音原样。
 
-use super::*;
+use super::QingjianInputController;
+use crate::host;
+use crate::imk::TextClient;
 
 impl QingjianInputController {
     pub(super) fn commit_highlighted(&self, client: TextClient<'_>) -> bool {
@@ -17,11 +19,13 @@ impl QingjianInputController {
             }
             return self.commit_raw(client);
         };
-        let Some(text) = host::with(|h| h.engine.commit(&candidate)) else {
+        let Some(text) = host::with(|h| h.engine.select_candidate(&candidate)) else {
             return false;
         };
-        tracing::debug!(%text, "commit");
-        client.insert_text(&text);
+        if let Some(text) = text {
+            tracing::debug!(%text, "commit");
+            client.insert_text(&text);
+        }
         self.refresh(client);
         true
     }

@@ -1,6 +1,25 @@
 //! 候选生成：按模式分派查询，整句转换与词级查找，位置展开。
 
-use super::*;
+use super::{
+    ENGLISH_MODE_CANDIDATES, Engine, MAX_CANDIDATES, RESCORE_PATHS, abbreviated_count, choice_key,
+    is_raw, pattern_key, segment_longest_prefix,
+};
+use crate::candidate::{Candidate, CandidateKind, CandidateList};
+use crate::correction::{self, typo};
+use crate::engine::{
+    ENGLISH_SWITCH_PENALTY, ENGLISH_ZIPF_FLOOR, Learner, MIN_COMPLETION_LETTERS,
+    MIN_ENGLISH_TAIL_HEAD_LETTERS, MIN_ENGLISH_TAIL_LETTERS, MIN_PINYIN_LIKE_TAIL_LETTERS,
+};
+use crate::engine::{JointStats, Timings};
+use crate::english;
+use crate::fuzzy::Expanded;
+use crate::parser::{self, ParseError, Segmentation};
+use crate::ranking::{self, Scored};
+use crate::sentence::{self, Conversion};
+use crate::shortcut;
+use qingjian_dictionary::Match;
+use std::collections::HashMap;
+use std::time::{Duration, Instant};
 
 mod code;
 mod composed;
@@ -12,6 +31,7 @@ pub(crate) use joint::select_probe_candidates_for_test as select_probe_candidate
 
 mod result;
 mod snapshot;
+mod word_limit;
 
 pub(crate) use english_tail::EnglishTail;
 pub use result::Query;
@@ -52,6 +72,8 @@ impl Engine {
         if self.aux_filter().is_none() {
             self.insert_custom_phrases(&mut query.candidates.items);
         }
+        query.selected = self.selected_text();
+        self.limit_word_candidates(&mut query.candidates.items);
         // 给输入日志留个摘要：上屏时才知道选了什么，这里才知道看到了什么
         let pinyin = match &query.correction {
             Some(correction) => correction.segmentation.joined("'"),
@@ -160,6 +182,7 @@ impl Engine {
                     return Err(error);
                 }
                 return Ok(Query {
+                    selected: String::new(),
                     segmentations: Vec::new(),
                     candidates: CandidateList { items },
                     tail: keys.to_owned(),
@@ -351,6 +374,7 @@ impl Engine {
                 .then(|| join_marked_typed(&self.composition.typed_scope(), &segmentations, tail))
         });
         Ok(Query {
+            selected: String::new(),
             segmentations,
             candidates: CandidateList { items },
             tail: tail.to_owned(),
@@ -385,6 +409,7 @@ impl Engine {
             });
         }
         Query {
+            selected: String::new(),
             segmentations: Vec::new(),
             candidates: CandidateList { items },
             tail: scope.to_owned(),
@@ -415,6 +440,7 @@ impl Engine {
             aux_code: None,
         }];
         Query {
+            selected: String::new(),
             segmentations: Vec::new(),
             candidates: CandidateList { items },
             tail: scope.to_owned(),
@@ -456,6 +482,7 @@ impl Engine {
         self.insert_emoji(&mut items);
         items.sort_by_key(|c| c.kind == CandidateKind::Emoji);
         Query {
+            selected: String::new(),
             segmentations: Vec::new(),
             candidates: CandidateList { items },
             tail: scope.to_owned(),
@@ -500,6 +527,7 @@ impl Engine {
             ),
         };
         Query {
+            selected: String::new(),
             segmentations: Vec::new(),
             candidates,
             tail,

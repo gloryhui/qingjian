@@ -44,19 +44,17 @@ impl QingjianInputController {
         }
         let pending = host::with(|h| {
             let had_pending = h.mode.has_pending();
-            let pending = h.mode.modifier_event(modifier);
+            let pending = h.mode.modifier_flags(
+                modifier,
+                flags.contains(NSEventModifierFlags::Shift),
+                flags.contains(NSEventModifierFlags::Control),
+            );
             if had_pending
                 && !h.mode.has_pending()
                 && let Some(timer) = h.pending_switch.take()
             {
                 timer.invalidate();
             }
-            // 键位的开合是自己记的（聚合标志分不清左右两只），记漏了就照聚合标志清掉：
-            // 输入法可能在按住 Shift 的时候才被激活。必须在判定之后对账，否则抬起会被当成按下。
-            h.mode.resync(
-                flags.contains(NSEventModifierFlags::Shift),
-                flags.contains(NSEventModifierFlags::Control),
-            );
             if pending {
                 if let Some(timer) = h.pending_switch.take() {
                     timer.invalidate();
@@ -74,7 +72,19 @@ impl QingjianInputController {
             pending
         })
         .unwrap_or(false);
-        tracing::debug!(key_code = event.keyCode(), ?flags, pending, "修饰键事件");
+        host::with(|h| {
+            tracing::info!(
+                controller = ?std::ptr::from_ref(self),
+                key_code = event.keyCode(),
+                timestamp = event.timestamp(),
+                ?flags,
+                scheduled = pending,
+                pending = h.mode.has_pending(),
+                english = h.mode.english(),
+                switch_pressed = h.mode.switch_pressed(),
+                "修饰键事件"
+            );
+        });
         false
     }
 
@@ -93,6 +103,6 @@ impl QingjianInputController {
             h.indicator.update(h.mode.english());
             h.mode.english()
         });
-        tracing::info!(?english, "切换中英模式");
+        tracing::info!(controller = ?std::ptr::from_ref(self), ?english, "切换中英模式");
     }
 }

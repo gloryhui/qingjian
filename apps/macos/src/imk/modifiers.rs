@@ -1,8 +1,23 @@
 //! 修饰键与切换键的识别。IMK 的 `inputText:client:` 不带事件对象，Caps Lock 只能从系统当前状态读。
 
 use objc2_app_kit::{NSEvent, NSEventModifierFlags};
-use qingjian_platform::SwitchKey;
 use qingjian_platform::key_tap::ModifierEvent;
+use qingjian_platform::{KeyCombo, Modifiers, SwitchKey};
+
+/// 组合键精确匹配修饰键；主回车与数字键盘回车等价，Tab 不参与。
+pub fn matches_combo(
+    combo: KeyCombo,
+    pressed: Modifiers,
+    key_code: u16,
+    typed: Option<&str>,
+) -> bool {
+    combo.modifiers == pressed
+        && if combo.key == '\r' {
+            matches!(key_code, 36 | 76)
+        } else {
+            typed.is_some_and(|text| text.eq_ignore_ascii_case(&combo.key.to_string()))
+        }
+}
 
 /// Caps Lock 亮着：只管大小写，这一次按键整个交给应用（大写由系统键盘布局给），不改中英模式。
 pub fn caps_lock_on() -> bool {
@@ -25,8 +40,8 @@ pub fn switch_key_of(key_code: u16) -> Option<(SwitchKey, u8)> {
 
 /// 一条 `FlagsChanged` 解码成 [`ModifierEvent`]：是哪个切换键的哪只键、按下这一刻是不是裸按。
 ///
-/// 按下还是抬起不在这里判——键位的开合由 [`qingjian_platform::key_tap::KeyTap`] 自己记（同一只键的
-/// 事件必然按下 / 抬起交替，而聚合标志分不清左右两只）。
+/// 键位由 [`qingjian_platform::key_tap::KeyTap`] 记录；控制器把聚合标志一并传给 ModeState，
+/// 先忽略重复的按下 / 抬起，再送进单击状态机。聚合标志分不清左右两只，仍需键位记录。
 pub fn modifier_event(event: &NSEvent) -> ModifierEvent {
     match switch_key_of(event.keyCode()) {
         Some((key, slot)) => ModifierEvent {
@@ -66,6 +81,35 @@ fn bare_press(key: SwitchKey, flags: NSEventModifierFlags) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn translation_combo_accepts_both_returns_with_exact_modifiers_only() {
+        let combo = KeyCombo::COMMIT_TRANSLATION_DEFAULT;
+        for key in [36, 76] {
+            assert!(matches_combo(combo, Modifiers::OPTION, key, None));
+            assert!(!matches_combo(combo, Modifiers::default(), key, None));
+            assert!(!matches_combo(
+                combo,
+                "option+shift".parse().unwrap(),
+                key,
+                None
+            ));
+        }
+        assert!(!matches_combo(combo, Modifiers::OPTION, 48, Some("\t")));
+        let custom: KeyCombo = "control+e".parse().unwrap();
+        assert!(matches_combo(
+            custom,
+            "control".parse().unwrap(),
+            14,
+            Some("E")
+        ));
+        assert!(!matches_combo(
+            custom,
+            "control".parse().unwrap(),
+            14,
+            Some("EE")
+        ));
+    }
 
     /// Shift 与 Control 的左右两只各占一个键位；Caps Lock、Tab、字母都不算。
     #[test]

@@ -190,6 +190,9 @@ impl Engine {
     /// 开（缺省）停在辅码态（`;` 仍在、无码词也回来），关则回拼音态。码段本来就空（刚触发，或删空停住）
     /// 时按退格 = 退出辅码态、拼音一个字符都不动。每次退格候选都当场重筛。
     pub fn backspace(&mut self) -> bool {
+        if self.undo_selection() {
+            return true;
+        }
         if let Some(code) = self.aux_code.take() {
             if code.len() > 1 {
                 self.aux_code = Some(code[..code.len() - 1].to_owned());
@@ -203,6 +206,7 @@ impl Engine {
     }
 
     pub fn clear(&mut self) {
+        self.selected.clear();
         self.composition.clear();
         self.aux_code = None;
         self.chain.leave_buffer();
@@ -312,7 +316,7 @@ impl Engine {
 
     /// 缓冲区里只有一个 `?`：还没决定是问字还是标点。壳在确认标点时调用 [`Self::restore_bare_question`]。
     pub fn bare_question(&self) -> bool {
-        self.composition.text() == QUESTION_PREFIX.to_string()
+        self.selected.is_empty() && self.composition.text() == QUESTION_PREFIX.to_string()
     }
 
     /// 确认单独的问号并清空缓冲区；中文遵循标点设置，英文原样输出。
@@ -331,6 +335,7 @@ impl Engine {
 
     /// 用一段完整拼音替换当前缓冲区，供 CLI 和测试一次性喂入。
     pub fn set_input(&mut self, input: &str) {
+        self.selected.clear();
         self.composition.clear();
         for c in input.chars() {
             self.push(c);
@@ -339,6 +344,7 @@ impl Engine {
 
     /// 放弃当前拼音，原样返回给壳（通常是用户按回车要上屏字母本身）。
     pub fn take_raw(&mut self) -> String {
+        let mut selected = self.commit_selected();
         // 回车原样上屏拼音段：码段（没上屏的码）到此结束
         self.aux_code = None;
         // 纠错生效时用户仍按了回车：这个串就是要原样打的，记下来以后不再纠它
@@ -353,7 +359,7 @@ impl Engine {
             // 壳在回车 / 失焦时不管有没有在组句都会来一趟：空的不记日志、不计统计
             self.clear();
             self.chain.reset();
-            return raw;
+            return selected;
         }
         self.log_commit(&raw, &raw, InputSource::Raw);
         // 原样上屏的是个英文词（`gist`）：记进个人英文词表，下次直接出候选。
@@ -370,7 +376,8 @@ impl Engine {
         self.punctuation.note_committed(&raw);
         self.history.record(&raw);
         self.chain.reset();
-        raw
+        selected.push_str(&raw);
+        selected
     }
 }
 

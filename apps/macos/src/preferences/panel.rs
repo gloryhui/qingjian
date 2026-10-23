@@ -1,3 +1,5 @@
+//! 可交互的偏好设置窗口，关闭时保留候选面板所需的窗口显示能力。
+
 use objc2::rc::Retained;
 use objc2::{MainThreadMarker, MainThreadOnly, define_class, msg_send};
 use objc2_app_kit::{
@@ -10,18 +12,8 @@ define_class!(
     #[unsafe(super(NSWindow))]
     #[thread_kind = MainThreadOnly]
     #[ivars = ()]
-    /// 设置窗口的 NSWindow：关窗时把进程的激活策略切回 Prohibited，让输入法回到纯后台。
+    /// 设置窗口；关闭只收起本窗口，不改变整个进程的激活策略。
     pub struct PreferencesPanel;
-
-    impl PreferencesPanel {
-        #[unsafe(method(close))]
-        fn close(&self) {
-            let mtm = MainThreadMarker::from(self);
-            NSApplication::sharedApplication(mtm)
-                .setActivationPolicy(NSApplicationActivationPolicy::Prohibited);
-            let _: () = unsafe { msg_send![super(self), close] };
-        }
-    }
 
     unsafe impl NSObjectProtocol for PreferencesPanel {}
 );

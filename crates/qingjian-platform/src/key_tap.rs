@@ -57,6 +57,11 @@ impl KeyTap {
         self.armed.get().is_some()
     }
 
+    /// 当前记录的物理键位是否按下；平台可据事件标志忽略同一按下 / 抬起的重复投递。
+    pub fn is_held(&self, key: SwitchKey, slot: u8) -> bool {
+        self.held[slots_of(key)].get() & (1u8 << slot.min(SLOT_BITS)) != 0
+    }
+
     /// 一次物理修饰键事件：命中一次单击返回 `true`。
     ///
     /// 同一个键位的必然按下 / 抬起交替，所以「这个键位还没记着」就是按下、「已经记着」就是抬起；聚合标志

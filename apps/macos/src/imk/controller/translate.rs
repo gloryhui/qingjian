@@ -1,8 +1,24 @@
 //! 翻译选中文字、译词键与删候选键。
 
-use super::*;
+use super::{MAX_TRANSLATE_CHARS, QingjianInputController};
+use crate::host;
+use crate::imk::{TextClient, secure_input};
 
 impl QingjianInputController {
+    /// 当前高亮候选没有释义时保留组句，不误发回车。
+    pub(super) fn commit_highlighted_translation(&self, client: TextClient<'_>) -> bool {
+        let text = host::with(|h| {
+            let candidate = h.session.candidate(h.session.highlighted)?;
+            h.engine.commit_translation(&candidate, 0)
+        })
+        .flatten();
+        if let Some(text) = text {
+            client.insert_text(&text);
+            self.refresh(client);
+        }
+        true
+    }
+
     /// Option+数字：上屏当前页第几个候选的译文（学习和拼音消耗与选那个候选一样）。
     /// 不在组句中时不管；候选没有译文就吞掉按键不动，免得 ¡™£ 进应用。
     /// 翻译应用里选中的文字：云服务关着、密码框、没有选区都不动（键交回应用）。
@@ -76,7 +92,7 @@ impl QingjianInputController {
         sense: usize,
         client: TextClient<'_>,
     ) -> bool {
-        let composing = host::with(|h| !h.engine.composition().is_empty()).unwrap_or(false);
+        let composing = host::with(|h| h.engine.is_composing()).unwrap_or(false);
         if !composing {
             return false;
         }
@@ -102,7 +118,7 @@ impl QingjianInputController {
     /// 修饰键 + 数字（缺省 ⇧）：删掉当前页第几个候选。不在组句中不管；那格没有候选就吞掉按键不动。
     /// 删完重新查一遍（排序会变），结果那句话显示在拼音行右侧，敲下一键就没了。
     pub(super) fn handle_delete_key(&self, digit: usize, client: TextClient<'_>) -> bool {
-        let composing = host::with(|h| !h.engine.composition().is_empty()).unwrap_or(false);
+        let composing = host::with(|h| h.engine.is_composing()).unwrap_or(false);
         if !composing {
             return false;
         }

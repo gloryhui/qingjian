@@ -1,13 +1,17 @@
 //! 命令键（回车、退格、方向键、Tab、Esc 等）的处理。
 
-use super::*;
+use super::QingjianInputController;
+use crate::host;
+use crate::imk::TextClient;
+use objc2::runtime::Sel;
+use objc2::sel;
 
 impl QingjianInputController {
     /// 组句期间所有编辑动作都由我们接管；不认识的一律吞掉，否则应用会动光标、丢 marked text。
     pub(super) fn handle_command(&self, selector: Sel, client: TextClient<'_>) -> bool {
         tracing::debug!(selector = %selector, "didCommandBySelector");
         self.note_application(&client);
-        let composing = host::with(|h| !h.engine.composition().is_empty()).unwrap_or(false);
+        let composing = host::with(|h| h.engine.is_composing()).unwrap_or(false);
         if !composing {
             // 删的是应用里的文字：刚上屏的词被整个删掉是「选错了」的信号，Engine 记着；
             // 按词 / 按行删的数不清删了几个字，撤销的账就不记了

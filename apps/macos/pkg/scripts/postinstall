@@ -1,15 +1,36 @@
 #!/bin/sh
-# 装完之后：杀掉旧进程，再以当前登录用户的身份把输入源注册并启用。
+# 装完之后：结束旧进程、启动新版，再以当前登录用户的身份把输入源注册并启用。
 # 安装器以 root 运行，而输入源是每个用户自己的设置，所以要切到用户的会话里去调 `qingjian-macos --register`。
 set -u
 APP="/Library/Input Methods/Qingjian.app"
 BIN="$APP/Contents/MacOS/qingjian-macos"
 
 pkill -x qingjian-macos 2>/dev/null || true
+# 旧进程要先释放 IMK 连接，否则 LaunchServices 可能仍把它当成运行中的应用。
+attempt=0
+while pgrep -x qingjian-macos >/dev/null 2>&1 && [ "$attempt" -lt 50 ]; do
+    sleep 0.1
+    attempt=$((attempt + 1))
+done
 
 user="$(stat -f%Su /dev/console 2>/dev/null || true)"
 if [ -n "$user" ] && [ "$user" != "root" ]; then
     uid="$(id -u "$user")"
+    # 先在后台启动新版再注册；不能用 -j 隐藏整个应用，否则候选窗口也会隐藏。
+    if launchctl asuser "$uid" sudo -u "$user" /usr/bin/open -g "$APP"; then
+        attempt=0
+        while ! pgrep -u "$uid" -x qingjian-macos >/dev/null 2>&1 && [ "$attempt" -lt 50 ]; do
+            sleep 0.1
+            attempt=$((attempt + 1))
+        done
+        if pgrep -u "$uid" -x qingjian-macos >/dev/null 2>&1; then
+            echo "青简：新版后台进程已启动"
+        else
+            echo "青简：新版后台进程没有启动，请保留安装日志并联系作者"
+        fi
+    else
+        echo "青简：启动新版后台失败，请保留安装日志并联系作者"
+    fi
     if launchctl asuser "$uid" sudo -u "$user" "$BIN" --register; then
         echo "青简：已为 $user 注册并启用输入源"
     else

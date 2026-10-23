@@ -1,3 +1,5 @@
+//! 可配置的修饰键与主键组合。
+
 use std::fmt;
 use std::str::FromStr;
 
@@ -5,14 +7,14 @@ use serde::{Deserialize, Serialize};
 
 use super::modifiers::Modifiers;
 
-/// 修饰键 + 一个字母键的组合，配置里写成 `control+option+t`。
+/// 修饰键 + 一个字母、数字或 Enter 键的组合，配置里写成 `control+option+t`。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(try_from = "String", into = "String")]
 pub struct KeyCombo {
     /// 修饰键，至少一个。
     pub modifiers: Modifiers,
 
-    /// 字母或数字键（小写）。
+    /// 字母或数字键（小写），Enter 用 `\r` 表示。
     pub key: char,
 }
 
@@ -27,9 +29,22 @@ impl KeyCombo {
         key: 't',
     };
 
+    pub const COMMIT_TRANSLATION_DEFAULT: Self = Self {
+        modifiers: Modifiers::OPTION,
+        key: '\r',
+    };
+
     /// 配置文件里的写法。
     pub fn key_string(&self) -> String {
-        format!("{}+{}", self.modifiers.key(), self.key)
+        format!(
+            "{}+{}",
+            self.modifiers.key(),
+            if self.key == '\r' {
+                "enter".to_owned()
+            } else {
+                self.key.to_string()
+            }
+        )
     }
 
     /// 给人看的写法：`⌃⌥T`。
@@ -37,7 +52,11 @@ impl KeyCombo {
         format!(
             "{}{}",
             self.modifiers.label(),
-            self.key.to_ascii_uppercase()
+            if self.key == '\r' {
+                "↵".to_owned()
+            } else {
+                self.key.to_ascii_uppercase().to_string()
+            }
         )
     }
 }
@@ -56,6 +75,12 @@ impl FromStr for KeyCombo {
             .trim()
             .rsplit_once('+')
             .ok_or_else(|| format!("expected modifiers+key, got {text:?}"))?;
+        if key.trim().eq_ignore_ascii_case("enter") || key.trim().eq_ignore_ascii_case("return") {
+            return Ok(Self {
+                modifiers: modifiers.parse()?,
+                key: '\r',
+            });
+        }
         let mut chars = key.trim().chars();
         let (Some(key), None) = (chars.next(), chars.next()) else {
             return Err(format!("key must be a single character: {key:?}"));
@@ -93,6 +118,19 @@ impl fmt::Display for KeyCombo {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn enter_shortcuts_round_trip_and_remain_configurable() {
+        let default: KeyCombo = "option+enter".parse().unwrap();
+        assert_eq!(default, KeyCombo::COMMIT_TRANSLATION_DEFAULT);
+        assert_eq!(default.label(), "⌥↵");
+        assert_eq!(default.key_string(), "option+enter");
+        assert_eq!("alt+return".parse::<KeyCombo>().unwrap(), default);
+        assert_eq!(
+            "control+enter".parse::<KeyCombo>().unwrap().key_string(),
+            "control+enter"
+        );
+    }
 
     #[test]
     fn parses_and_labels() {

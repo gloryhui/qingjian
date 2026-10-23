@@ -28,7 +28,15 @@ pub use response::Prediction;
 pub use script::translation_target;
 pub use surrounding_text::SurroundingText;
 
-use super::*;
+use super::{
+    Engine, MIN_PREDICTION_LETTERS, PREDICTION_CANDIDATE_HINTS, is_raw, segment_longest_prefix,
+    take_first_chars, take_last_chars,
+};
+use crate::candidate::Candidate;
+use crate::engine::InputLogger;
+use crate::engine::{InputLogEntry, InputSource, LastCommit, query};
+use crate::parser::{self, Segmentation};
+use crate::{sentence, shortcut};
 
 impl Engine {
     /// 是否接了会联想的 Predictor；壳据此决定要不要起轮询定时器、画云朵标识。
@@ -265,6 +273,7 @@ impl Engine {
     /// 但按语言模型把它切成词（[`sentence::segment_text`]）逐条记进个人 n-gram，与选整句候选一样；
     /// 标点处断句，句尾是标点时之后的词按句首记。整句退格删光再重打时这些转移一并退回。
     pub fn accept_prediction(&mut self, text: &str) -> String {
+        let mut selected = self.commit_selected();
         let traditional_text = text.to_owned();
         let original_text_owned;
         let text = if self.traditional {
@@ -320,7 +329,8 @@ impl Engine {
             phrase: None,
         };
         self.remember_commit(commit);
-        traditional_text
+        selected.push_str(&traditional_text);
+        selected
     }
 
     /// 云端词学成用户词时用哪套音节。模型给的读音偶有错（我的 → wo di），错读音学进去以后只会按错读音出来，

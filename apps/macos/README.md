@@ -19,8 +19,8 @@ apps/macos/scripts/bundle.sh --install
 apps/macos/scripts/bundle.sh --pkg        # target/pkg/qingjian-<版本>-macos-<arch>.pkg
 ```
 
-pkg 装到 `/Library/Input Methods/`（需要管理员密码），装完 postinstall 以登录用户身份跑 `qingjian-macos --register`（注册、启用并切成当前输入源），
-输入源自动注册并启用，不用手动添加。版本号取 workspace `Cargo.toml`，构建号是提交数。
+pkg 装到 `/Library/Input Methods/`（需要管理员密码），装完 postinstall 等旧进程退出后以登录用户身份启动新版，再跑 `qingjian-macos --register`（注册、启用并切成当前输入源），
+输入源自动注册并启用，不用手动添加；后台启动结果单独记在安装日志。版本号取 `apps/macos/Cargo.toml`，构建号是提交数。
 机器上同时有 `~/Library` 的开发副本时两份会互相顶，先跑 `scripts/uninstall.sh`。
 
 签名与公证靠环境变量，没设就 ad-hoc 签 `.app`、pkg 不签（测试者首次打开要在「系统设置 → 隐私与安全性」里点「仍要打开」）：

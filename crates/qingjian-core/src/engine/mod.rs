@@ -21,6 +21,7 @@ mod privacy;
 mod query;
 mod raw;
 mod rescoring;
+mod selection;
 mod session;
 mod setup;
 mod statistics;
@@ -30,9 +31,9 @@ mod vocabulary;
 
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
-use qingjian_dictionary::{AuxCodeLookup, CodeTable, Dictionary, Match, WordList};
+use qingjian_dictionary::{AuxCodeLookup, CodeTable, Dictionary, WordList};
 
 pub use alignment::Alignment;
 pub use annotation::AnnotationReport;
@@ -61,16 +62,14 @@ pub use vocabulary::{
     FRESH_UNTIL, LevelCount, NoVocabularyTracker, VocabularySummary, VocabularyTracker,
 };
 
-use crate::candidate::{Candidate, CandidateKind, CandidateList, Language};
+use crate::candidate::{Candidate, CandidateKind, Language};
 use crate::composition::Composition;
-use crate::correction::{self, Correction, TypoCosts, typo};
+use crate::correction::{self, Correction, TypoCosts};
 use crate::emoji::EmojiTable;
-use crate::english;
-use crate::fuzzy::{Expanded, FuzzyRules};
+use crate::fuzzy::FuzzyRules;
 use crate::history::InputHistory;
 use crate::parser::{self, ParseError, Segmentation};
 use crate::punctuation::Punctuation;
-use crate::ranking::{self, Scored};
 use crate::sentence::{
     self, Conversion, Interpolation, LanguageModel, NoLanguageModel, Personal, SentenceScorer,
 };
@@ -102,6 +101,12 @@ pub struct Engine {
 
     /// 当前拼音缓冲区。
     composition: Composition,
+
+    /// 尚未上屏的分段选择。
+    selected: Vec<selection::Selected>,
+
+    /// 词组候选最多出现的位置数；平台按页大小设置。
+    word_candidate_limit: Option<usize>,
 
     /// 英文词表，中英混输用；没有就不出英文候选。
     english: Option<WordList>,
@@ -397,6 +402,8 @@ impl Engine {
             modes: ModeKeys::default(),
             learner: learning::MutedLearner::new(Box::new(NoLearner)),
             composition: Composition::default(),
+            selected: Vec::new(),
+            word_candidate_limit: None,
             english: None,
             english_mode: false,
             punctuation: Punctuation::default(),

@@ -64,6 +64,10 @@ TSV 解析、查询与生成工具把 `lue` / `nue` 统一成 `lve` / `nve`。
 
 `Engine::discard_input` / `EngineSession::discard_input` 用于隐私能力变化时无痕清理输入，包括透传缓冲、学习链和暂存词汇曝光；`set_private` 只切换写入开关，保留已输入的组句。
 
+macOS 分段选词使用 `Engine::select_candidate`：未选完的词连同原始 Composition、查询摘要与辅码放进 `engine/selection`，不提前提交或学习；`backspace` 优先撤销一段，尾部修改保留。`Query` 的 marked text、分段光标与 `raw_preedit` 包含暂存前缀。整段选完、原样确认、译词或云端整句确认才重放已有学习路径，取消直接丢弃暂存。
+macOS 配置把两页候选的上限（扣除第一页云端格数）传给 `Engine::set_word_candidate_limit`；Core 查询保持前部排序，超限仅保留单字中文或形码候选，英文模式不截断。Windows、Linux 未设置该上限，延续原有分页。
+`[shortcut] commit_translation` 缺省 `option+enter`，macOS 只在组句中匹配精确修饰键，并把主回车与数字键盘回车视为同键；高亮项的第一条译文通过 Core `commit_translation` 提交，没有译文不改变组句。原有 Tab 与数字译词键不变。
+
 ## crates/qingjian-translate
 
 `Glossary`，本地 TSV 释义表（词性 + 译文）；`LevelTable`，词汇等级表（`assets/levels/levels-{en,ja}.tsv`，CEFR A1–C2 / JLPT N5–N1，
@@ -138,7 +142,7 @@ Engine 侧在 `engine/rescoring/`：接了打分器就取多样化 Viterbi 路�
 `set_value` 用 toml_edit 原地改键保留注释；`[model] enabled` 本地整句模型开关，`LocalModelConfig`；
 中英模式两项：`[shortcut] switch_mode`（`SwitchKeys`：勾选 shift / control / ctrl+alt+space，可多选，老配置的单个字符串照读）与 `[general] english_mode`（内置英文模式总开关））；
 `key_tap::KeyTap` 是修饰键单击状态机（目前只有 macOS 用）：喂 `ModifierEvent { switch, slot, bare }`——`slot` 是左 / 右键位（聚合标志分不出左右），
-`bare` 是按下那一刻没搭着别的修饰键；抬起时只剩那一个键位才算一次单击，`interrupt` 作废普通键插进来的那次，`resync` 拿聚合标志清掉漏了抬起的键位。
+`bare` 是按下那一刻没搭着别的修饰键；抬起时只剩那一个键位才算一次单击，`interrupt` 作废普通键插进来的那次，`resync` 拿聚合标志清掉漏了抬起的键位；`is_held` 只读物理键位，用于平台层过滤重复事件。
 `Config::migrate_macos_pure_english` 是 macOS 升级时的一次性迁移（改 `[general] english_candidates`，靠配置同目录的印记文件保证只检查一次）；
 `extra_dictionaries` 列出 / 加载随包领域词库与用户 `dicts/`
 （mac 壳与 Windows Server 共用，同名 `.qj` 优先于 `.tsv`）；`code_tables` 同构地列出 / 加载随包根 `codes/` 与用户 `codes/` 的码表
@@ -193,6 +197,11 @@ macOS 候选面板默认在 `kCGPopUpMenuWindowLevel`（101）；Snipaste（`com
 
 ## apps/macos
 
+入口在构造候选面板前初始化 NSApplication 并设为 Accessory，既无 Dock 图标又允许窗口显示；偏好设置关闭仅收起该窗口，不切回 Prohibited。后者会让候选查询和 marked text 正常但 orderFront 无法显示面板。启动日志包含包版本与激活策略。
+候选显示前若 `NSApplication.isHidden` 为真，先 `unhideWithoutActivation` 恢复整个应用，不激活输入法、不抢当前输入框焦点；安装脚本只用 `open -g` 后台启动，避免 `-j` 的隐藏标记。
+`cargo run -p qingjian-macos --example candidate_visibility --locked` 显式执行三轮窗口冒烟，不登记输入源、不读用户数据；通过 `QINGJIAN_WINDOW_REPORT` 可保存结果。完整故障复现需要把例程二进制放入带 `LSBackgroundOnly=true`、`NSPrincipalClass=NSApplication` 的临时 app 后用 NSWorkspace 启动（可设 `hides=true`、`activates=false`）；普通命令行进程的 orderFront 可能自行解除隐藏，不能代替后台 app 回归。2026-10-23 在 macOS 15.8.1 验证：后台 app 中去掉 unhide 恢复逻辑，第一轮即因仍隐藏失败；保留逻辑后三轮均恢复且前台焦点未变。
+候选面板先 `orderFront(None)` 恢复显示，再 `orderFrontRegardless` 调整前后顺序；判断恢复成功需要同时满足 `isVisible` 与 `isOnActiveSpace`，仅处于当前 Space 不能证明窗口已显示。不可见或不在当前 Space 时重建面板，并保留视图、外观与窗口层级。2026-10-23 在 macOS 15.8.1 的 TextEdit 复现并验证：原路径有 marked text 但无候选，修正后可重复显示、空格上屏与再次输入；Option+Enter 输出 optimize，第三页单字，分段选词退格恢复。
+
 IMK 输入法，源码按 `app / host / imk / candidates / menubar / preferences` 分目录。
 
 - 控制器必须覆盖 `recognizedEvents:`，订阅 `KeyDown | FlagsChanged`，否则 IMK 的默认声明只有 `KeyDown`，
@@ -202,10 +211,10 @@ IMK 输入法，源码按 `app / host / imk / candidates / menubar / preferences
 - 输入法菜单（状态项 + 系统输入源菜单）与偏好设置窗口都是配置文件的前端：只写 `config.toml`，`Host::apply_config` 一条通路热加载，激活期间每秒看一次文件 mtime。
   输入方案（`[general] scheme`）也在这里装配：双拼 / 注音设给引擎，形码额外按 `paths::code_table_path()` 挂码表
   （用户目录 `wubi/wubi86.tsv` 优先，包里 `Resources/wubi/` 兜底；找不到只警告并按拼音跑）。
-- `apps/macos/scripts/bundle.sh --install` 打包安装到 `~/Library/Input Methods/`（开发用），`--pkg` 做分发用的 pkg（装 `/Library/Input Methods/`，postinstall 跑 `qingjian-macos --register`
+- `apps/macos/scripts/bundle.sh --install` 打包安装到 `~/Library/Input Methods/`（开发用），`--pkg` 做分发用的 pkg（装 `/Library/Input Methods/`，postinstall 等旧进程退出后以登录用户身份启动新版，确认后台进程存在，再跑 `qingjian-macos --register`
   注册、启用并切成当前输入源；签名 / 公证靠 `QINGJIAN_SIGN_IDENTITY` / `QINGJIAN_INSTALLER_IDENTITY` / `QINGJIAN_NOTARY_PROFILE`，没设就 ad-hoc；`QINGJIAN_TARGET` 指定架构，
   成品 `target/pkg/qingjian-<版本>-macos-<arm64|x86_64>.pkg`）；`scripts/uninstall.sh` 卸载。
-- 本机共存测试：`bundle.sh --test --pkg`（或 `--test --install`）生成 `QingjianTest.app`，输入源显示「青简测试版」，
+- 本机共存测试：`bundle.sh --test --pkg`（或 `--test --install`）生成 `QingjianTest.app`，输入源显示「青简测试版」；测试包关闭 bundle 版本大小检查，允许跨分支或 squash 后覆盖测试版，避免提交数下降导致跳过载荷；
   bundle / pkg ID 为 `app.qingjian.inputmethod.test`，IMK 连接名与 `.Hans` 模式 ID 同步切换，进程名为 `qingjian-test`。
   `app::bundle::user_directory_name()` 按主 bundle ID 选择 `QingjianTest` 数据 / 日志目录；正式版仍为 `Qingjian`。
   测试包的安装后脚本与随包卸载脚本只操作测试版；安装包为 `target/pkg/qingjian-test-<版本>-macos-<架构>.pkg`，版本带 `-test-<打包时间>`，区分同一提交的多次本地改动。
@@ -220,11 +229,12 @@ IMK 输入法，源码按 `app / host / imk / candidates / menubar / preferences
 - 中英模式是 `host/mode/mod.rs::ModeState` 自己的一份进程级状态（不再是 Caps Lock 硬件状态）：`[shortcut] switch_mode` 勾选的键单击一下翻一次，
   单击判定用 `qingjian-platform::key_tap::KeyTap`——它按**物理键位**记（`ModifierEvent { switch, slot, bare }`，macOS 左 / 右 Shift 是两个 slot，
   聚合的 `modifierFlags` 分不出左右），按下那一刻还要求**没搭着别的修饰键**（`bare`，`imk/modifiers.rs::bare_press` 判 ⌘⌥⌃ 与 Fn，Caps Lock 亮着不算），
-  抬起时手上只剩这一个键位才命中；`FlagsChanged` 在 `imk/controller/mode.rs::handle_flags` 里喂给它，判定之后再用聚合标志 `resync` 对账
+  抬起时手上只剩这一个键位才命中；`FlagsChanged` 在 `imk/controller/mode.rs::handle_flags` 里经 `ModeState::modifier_flags` 喂给它，先比对 `KeyTap::is_held` 与聚合标志过滤重复的按下 / 抬起（重复抬起保留待定切换，重复按下不刷新时长），判定之后再用聚合标志 `resync` 对账
   （输入法可能在按住 Shift 时才被激活，漏掉抬起会留幽灵按下；对账必须在判定之后，否则抬起会被当成按下）。macOS 的 `ModeState` 从 `KeyTap::is_armed()` 读单击资格，用 `Instant` 记录按下时刻；抬起不超过 500 ms（含边界）才算短按，长按直接取消，不创建定时器。短按命中后再独立待定 150 ms：迟到的 KeyDown 若仍带原切换键标志就作废，否则在处理该 KeyDown 前确认；没有后续按键则定时确认。KeyDown 与其他修饰键事件会作废待定单击及其定时器；KeyDown 仍 `interrupt` 作废正按着的那次单击；输入源停用、配置变化、panic 善后会清理按下时间与待定单击，并注销定时器。定时回调核对定时器身份并用原客户端做组句收尾。共享 `KeyTap` 没有时长判定，Windows / Linux 的单击行为不变。
   Caps Lock 只管大小写，状态项靠现成的 0.25 s 轮询带 ⇪；`[general] shift_letter = "compose"` 也**只认真正按住 Shift 打出的大写**（`imk/controller/text.rs` 要 `Modifiers.shift`），
   Caps Lock 送来的大写仍旧直接交给应用、不进组句。
   英文模式始终纯直通，`ModeState::passthrough()` 只看 `english`。
+  默认 info 日志记录控制器身份、激活时的应用标识、修饰键标志与中英状态、失活时的单击 / 定时器状态，以及每次激活后的首个 KeyDown 路由；启动日志带包版本。用于对照客户端重建会话与切换事件，不记录普通键码、字符或组句内容。
   `dispatch_event` 在应用识别、键码读取、提示清理及字符读取之前只读取 KeyDown 的修饰标志以消解待定单击，然后调用 `imk/controller/route/mod.rs::Route::key_down`；
   英文结果为 `Passthrough` 并立即返回 false，整个事件交还 macOS / 当前布局 / 应用。
   不调用 `insertText`、`note_passthrough`、`handle_text` 或 Engine，也不看 composition、英文候选配置、应用名单和翻译状态。

@@ -442,3 +442,40 @@ fn pinyin_like_english_tail_competes_with_the_plain_reading() {
     assert_eq!(engine.commit(&mixed), "我的database");
     assert!(engine.composition().is_empty());
 }
+
+/// 中文模式下 Shift+B 参与组句时，后续字母应继续给出英文整词补全。
+#[test]
+fn shifted_book_prefix_keeps_english_completions_and_raw_case() {
+    let words =
+        WordList::parse("book\tbook\t5300\nbooks\tbooks\t5100\nbooking\tbooking\t4200\n").unwrap();
+    let mut engine = Engine::new(Dictionary::default()).with_english(words);
+    engine.set_shift_letter_compose(true);
+    for c in "Boo".chars() {
+        engine.push(c);
+    }
+    let query = engine.query().unwrap();
+    for expected in ["book", "books", "booking"] {
+        assert!(
+            query.candidates.items.iter().any(|candidate| {
+                candidate.kind == CandidateKind::English
+                    && candidate.text.eq_ignore_ascii_case(expected)
+            }),
+            "missing completion: {expected}"
+        );
+    }
+    assert!(query.marked_text().starts_with('B'));
+    engine.push('k');
+    assert!(
+        engine
+            .query()
+            .unwrap()
+            .candidates
+            .items
+            .iter()
+            .any(|candidate| {
+                candidate.kind == CandidateKind::English
+                    && candidate.text.eq_ignore_ascii_case("book")
+            })
+    );
+    assert_eq!(engine.take_raw(), "Book");
+}

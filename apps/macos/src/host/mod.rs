@@ -117,6 +117,9 @@ pub struct Host {
     /// 翻译选中文字的快捷键（配置 `[shortcut] translate_selection`）。
     pub translate_keys: KeyCombo,
 
+    /// 当前高亮候选的第一条译词快捷键。
+    pub commit_translation_keys: KeyCombo,
+
     /// 进行中的「翻译选中文字」；有它时候选窗口显示的是译文（或「翻译中…」），按键先归它处理。
     pub translation: Option<TranslationJob>,
 
