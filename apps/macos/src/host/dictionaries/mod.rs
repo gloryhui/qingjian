@@ -4,8 +4,10 @@ mod info;
 
 pub use info::DictionaryInfo;
 
+use super::Host;
 use super::init::{dictionary_info, string_array, toggle_membership};
-use super::*;
+use crate::app::paths;
+use qingjian_platform::extra_dictionaries;
 
 impl Host {
     /// 「词库」页的列表：随包领域词库在前、用户目录 `dicts/` 里的在后（含关掉的）。
@@ -112,5 +114,13 @@ impl Host {
         tracing::info!(count = loaded.len(), "附加词库已装配");
         self.engine.set_extra_dictionaries(loaded);
         self.applied_dictionaries = config;
+        self.dictionary_files = dictionary_files();
     }
+}
+
+/// 用户词库的文件快照，只读取目录与元数据。
+pub(super) fn dictionary_files() -> Vec<(std::path::PathBuf, Option<std::time::SystemTime>, u64)> {
+    paths::dicts_dir()
+        .map(|dir| extra_dictionaries::snapshot(&dir))
+        .unwrap_or_default()
 }

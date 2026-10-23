@@ -26,14 +26,13 @@ use qingjian_core::{
     Candidate, CandidateKind, CloudWord, Engine, Language, NoInputLogger, Prediction,
 };
 use qingjian_learning::InputLog;
-use qingjian_platform::extra_dictionaries;
 use qingjian_platform::{
     DictionariesConfig, KeyCombo, LayoutMode, LocalModelConfig, Modifiers, PreeditMode,
 };
 use qingjian_predict::{ConnectionTest, PredictConfig, PredictError};
 
 use crate::app::{Settings, logging, paths};
-use crate::candidates::{CandidateWindow, Preedit};
+use crate::candidates::CandidateWindow;
 use crate::menubar::{InputMenu, ModeIndicator};
 use crate::preferences::{PreferencesWindow, UpdateStatus};
 
@@ -77,6 +76,9 @@ pub struct Host {
 
     /// 附加词库是按哪份 `[dictionaries]` 装的；开关变了才重新加载。
     applied_dictionaries: DictionariesConfig,
+
+    /// 上次装配用户词库的文件快照，发现未改配置的新文件。
+    dictionary_files: Vec<(PathBuf, Option<std::time::SystemTime>, u64)>,
 
     /// 偏好设置「词库」页显示的列表，勾选框 / 移除按钮的下标对着它。
     dictionary_list: Vec<DictionaryInfo>,

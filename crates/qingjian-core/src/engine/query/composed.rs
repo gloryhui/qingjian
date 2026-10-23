@@ -279,7 +279,7 @@ impl Engine {
         // 与 Viterbi 一致：个人 n-gram 相对静态模型的增量 + 用户选择次数加分；代价为零（只按原样读音建格）
         let personal_delta = (step_head - static_head) + (step_tail - static_tail);
         let selection = weight_bonus(weight(&head.text)) + weight_bonus(weight(&tail.text));
-        Some(static_head + static_tail + personal_delta + selection)
+        Some(static_head + static_tail + personal_delta + selection - head.reading - tail.reading)
     }
 
     /// 配对的静态分：语言模型认识就用模型的，不认识用词频兜底。

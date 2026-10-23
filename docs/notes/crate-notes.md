@@ -347,3 +347,18 @@ DLL 不读文件、不查 mtime。`SessionOpened` 只回过协议版本对得上
 Unix socket 用共享长度前缀与 Frame（当前公共版本 7，与 `PROTOCOL_VERSION` 同步，Fcitx5 插件里写死在 `qingjian.cpp` 的 OpenSession）；插件复用一条连接，每个上下文独立会话。Linux v3 扩展逐会话握手、确认 Sensitive/Password/Disable 后接受按下/释放、焦点和点击事实。
 候选回报绑定连接代次、上下文和服务端帧序号，仅当前聚焦页的有效释义进入 `note_displayed`，不把生成帧算作已展示。
 `[general] preedit` 使用已有 `both` / `inline` / `window`；没有新增 Linux 自绘配置。详见 [linux-fcitx5.md](linux-fcitx5.md)。
+
+
+## 当前分支的上游修复回移（2026-10-23）
+
+来源与取舍见 [整合记录](upstream-integration-2026-10-23.md)。保持 0.1.8-dev 和现有 Core / IMK 架构。
+
+- `dictionary/readings.rs` 在 TSV 与 mmap 词库加载后建立多音字总词频，`Match::reading_share` 提供读音占比，`.qj` 格式不变。
+  词级排序和整句词图扣 `-ln(share)`；`SpanWord.reading` 独立于敲错 penalty，组合路径也扣同一代价，完整词保护不将少见读音误认成敲错。
+- `FrequencyLearner` 保留原有 TSV 格式，最近使用日写入 sidecar；缺省半衰期 90 天，CLI 可用 `--tune decay-days=0` 关闭用于对照。
+  输入串与读音分开记选择，`commit::Choice` 保存读音供撤销；整句也保留显式选择及撤销，不记整句词频。
+  `unrecord_choice` 设置 dirty，确保保存后再撤销也能落盘。分段暂存仍在最终确认时才学习，并保留会话隔离。
+- 异步模型的 Job / Scored 携带 serial，只有最新有效请求结果结束轮询；macOS 重查后再次调度缺分路径，保留翻页 / 高亮保护。
+- macOS 定时监视用户词库的路径、mtime 与长度；设置窗口在点击别处、失焦、关闭时结束字段编辑，关闭仍保留 Accessory，候选显示仍做 unhide 恢复。
+- postinstall 在登录用户缓存目录清理 IntlDataCache 后，仍按“等旧进程退出 → open -g → 注册”启动；测试身份由模板替换保持独立。
+- Metal 创建前检查 residency set 支持，缺失时回退 CPU/F32；字体加载跳过无法栅格化的脚本文字轮廓，保留 emoji 位图并补宋体兜底。

@@ -248,6 +248,7 @@ fn legacy_qj_umlaut_keys_remain_queryable() {
         ]),
         total_frequency: 190,
         metadata: None,
+        readings: Default::default(),
     };
     let dir = std::env::temp_dir().join("qingjian-dictionary-tests");
     std::fs::create_dir_all(&dir).unwrap();
@@ -270,4 +271,37 @@ fn legacy_qj_umlaut_keys_remain_queryable() {
     assert_eq!(texts(&dictionary.lookup(&["lve"], false)), ["略"]);
     assert_eq!(texts(&dictionary.lookup(&["nue"], false)), ["虐"]);
     assert_eq!(texts(&dictionary.lookup(&["nve"], false)), ["虐"]);
+}
+
+#[test]
+fn polyphone_reading_shares_follow_each_readings_frequency() {
+    let dictionary = Dictionary::parse("区\tqu\t170000\n区\tou\t8500\n偶\tou\t15000\n").unwrap();
+    let hits = dictionary.lookup(&["ou"], false);
+    assert!(
+        hits.iter()
+            .find(|h| h.text == "区")
+            .unwrap()
+            .reading_share()
+            < 0.05
+    );
+    assert_eq!(
+        hits.iter()
+            .find(|h| h.text == "偶")
+            .unwrap()
+            .reading_share(),
+        1.0
+    );
+}
+
+#[test]
+fn mapped_polyphones_keep_the_same_reading_shares() {
+    let dictionary = Dictionary::parse("区\tqu\t170000\n区\tou\t8500\n偶\tou\t15000\n").unwrap();
+    let path = std::env::temp_dir().join(format!("qingjian-readings-{}.qj", std::process::id()));
+    dictionary.write_qj(&path, &Metadata::default()).unwrap();
+    let mapped = Dictionary::open_qj(&path).unwrap();
+    assert_eq!(
+        dictionary.lookup(&["ou"], false),
+        mapped.lookup(&["ou"], false)
+    );
+    std::fs::remove_file(path).unwrap();
 }

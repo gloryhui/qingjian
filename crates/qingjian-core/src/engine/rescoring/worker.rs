@@ -1,3 +1,6 @@
+//! 本地模型后台任务与结果队列，只保留最新的待执行任务。
+
+use std::cell::Cell;
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::thread::JoinHandle;
 
@@ -5,12 +8,16 @@ use crate::sentence::SentenceScorer;
 
 /// 一次打分任务：前文与一批文本。
 struct Job {
+    serial: u64,
+
     context: String,
     texts: Vec<String>,
 }
 
 /// 打好的分，与任务一一对应。
 pub(crate) struct Scored {
+    pub serial: u64,
+
     pub context: String,
     pub texts: Vec<String>,
     pub scores: Vec<f64>,
@@ -22,6 +29,7 @@ pub(crate) struct RescoreWorker {
     jobs: Sender<Job>,
     results: Receiver<Scored>,
     handle: Option<JoinHandle<()>>,
+    latest: Cell<u64>,
 }
 
 impl RescoreWorker {
@@ -46,6 +54,7 @@ impl RescoreWorker {
                         "神经重打分完成"
                     );
                     let done = Scored {
+                        serial: job.serial,
                         context: job.context,
                         texts: job.texts,
                         scores,
@@ -63,7 +72,12 @@ impl RescoreWorker {
             jobs,
             results,
             handle,
+            latest: Cell::new(0),
         }
+    }
+
+    pub fn latest(&self) -> u64 {
+        self.latest.get()
     }
 
     pub fn is_alive(&self) -> bool {
@@ -71,7 +85,17 @@ impl RescoreWorker {
     }
 
     pub fn submit(&self, context: String, texts: Vec<String>) {
-        if self.jobs.send(Job { context, texts }).is_err() {
+        let serial = self.latest.get() + 1;
+        self.latest.set(serial);
+        if self
+            .jobs
+            .send(Job {
+                serial,
+                context,
+                texts,
+            })
+            .is_err()
+        {
             tracing::warn!("神经重打分线程已退出");
         }
     }

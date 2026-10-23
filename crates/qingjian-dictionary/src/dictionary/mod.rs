@@ -62,6 +62,10 @@ struct Row {
     slot: Slot,
 }
 
+use self::readings::Readings;
+
+mod readings;
+
 /// 内存词库。从 TSV 解析时四段数据是自己的，从 `.qj` 打开时是映射文件里的，查询代码不区分。
 #[derive(Debug, Default)]
 pub struct Dictionary {
@@ -82,6 +86,9 @@ pub struct Dictionary {
 
     /// `.qj` 里的来历（名称、许可证、署名）；TSV 解析的没有。
     metadata: Option<Metadata>,
+
+    /// 多音字全部读音的词频之和，加载时构建，不改落盘格式。
+    readings: Readings,
 }
 
 impl Dictionary {
@@ -193,7 +200,9 @@ impl Dictionary {
             slots: Table::Owned(slots),
             total_frequency,
             metadata: None,
+            readings: Readings::default(),
         }
+        .with_readings()
     }
 
     /// 按文件内容选加载方式：`.qj` 容器直接映射，否则当 TSV 解析。
@@ -293,7 +302,22 @@ impl Dictionary {
             slots,
             total_frequency,
             metadata: Some(container.metadata().clone()),
-        })
+            readings: Readings::default(),
+        }
+        .with_readings())
+    }
+
+    fn with_readings(mut self) -> Self {
+        self.readings = Readings::build(&self);
+        self
+    }
+
+    fn reading_total(&self, key: &str, text: &str) -> u32 {
+        if key.contains(' ') {
+            0
+        } else {
+            self.readings.total(text)
+        }
     }
 
     /// 写成 `.qj`：内存里的四段原样落盘。`metadata.entries` 会填成词条数。
@@ -339,6 +363,7 @@ impl Dictionary {
                 text: self.text(slot),
                 pinyin: key,
                 frequency: slot.frequency,
+                reading_total: self.reading_total(key, self.text(slot)),
                 exact: true,
             })
         })
@@ -569,6 +594,7 @@ impl Dictionary {
                 text: self.text(slot),
                 pinyin: key,
                 frequency: slot.frequency,
+                reading_total: self.reading_total(key, self.text(slot)),
                 exact,
             });
         }

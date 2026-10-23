@@ -155,6 +155,7 @@ pub fn init(mtm: MainThreadMarker, info: &BundleInfo) -> Result<(), HostError> {
             last_flush: std::time::Instant::now(),
             applied_predict: PredictConfig::default(),
             applied_dictionaries: DictionariesConfig::default(),
+            dictionary_files: Vec::new(),
             dictionary_list: Vec::new(),
             learning_language,
             languages,

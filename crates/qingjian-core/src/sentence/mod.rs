@@ -98,3 +98,8 @@ pub fn transition_log_prob(
     let base = model.log_prob(context.previous, word).unwrap_or(fallback);
     personal.blend(context, word, base)
 }
+
+/// 多音字读音的负对数概率，避免少见读音借用字形总频率。
+pub fn reading_cost(hit: &qingjian_dictionary::Match<'_>) -> f64 {
+    -hit.reading_share().ln()
+}

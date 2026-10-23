@@ -479,3 +479,29 @@ fn shifted_book_prefix_keeps_english_completions_and_raw_case() {
     );
     assert_eq!(engine.take_raw(), "Book");
 }
+
+#[test]
+fn english_word_is_not_buried_by_reading_key_choices() {
+    // `wenti` 下选的 问题（读音键记了一份）不能隔着 `went` 把英文词顶下去：
+    // 英文位置的仲裁按字面键数，读音键泛化只服务中文自己的重打排序
+    let dictionary = Dictionary::parse("问题\twen ti\t900000\n").unwrap();
+    let words = WordList::parse("went\twent\t2000\n").unwrap();
+    let mut engine = Engine::new(dictionary)
+        .with_english(words)
+        .with_learner(Box::new(CountingLearner(HashMap::new())));
+    let commit = |engine: &mut Engine, input: &str, text: &str| {
+        engine.set_input(input);
+        let candidate = engine
+            .query()
+            .unwrap()
+            .candidates
+            .items
+            .into_iter()
+            .find(|c| c.text == text)
+            .unwrap();
+        engine.commit(&candidate);
+    };
+    commit(&mut engine, "wenti", "问题");
+    engine.set_input("went");
+    assert_eq!(texts_of(&engine)[0], "went");
+}

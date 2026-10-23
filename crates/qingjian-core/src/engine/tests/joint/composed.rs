@@ -379,7 +379,7 @@ fn personal_evidence_admits_a_composition_without_dictionary_support() {
     }
     // 个人 n-gram 只把「井 + 水」的路径分抬起来；越过完整词 净水 还需要用户明确选过整串
     // （Issue #16：子词序列证据不等于「这次输入就要这个组合」）。
-    learner.record_choice("jingshui", "井水");
+    learner.record_choice("jingshui", "", "井水");
     let mut engine = Engine::new(dictionary()).with_learner(Box::new(learner));
     let with = texts(&mut engine, "jing'shui");
     assert!(

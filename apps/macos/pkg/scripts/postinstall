@@ -16,6 +16,10 @@ done
 user="$(stat -f%Su /dev/console 2>/dev/null || true)"
 if [ -n "$user" ] && [ "$user" != "root" ]; then
     uid="$(id -u "$user")"
+    # 注册前清理共享及沙盒应用的输入源缓存，避免升级后继续使用旧输入源表。
+    cache="$(sudo -u "$user" getconf DARWIN_USER_CACHE_DIR 2>/dev/null)"
+    [ -n "$cache" ] && rm -f "$cache"com.apple.IntlDataCache.le* "$cache"*/com.apple.IntlDataCache.le* 2>/dev/null
+
     # 先在后台启动新版再注册；不能用 -j 隐藏整个应用，否则候选窗口也会隐藏。
     if launchctl asuser "$uid" sudo -u "$user" /usr/bin/open -g "$APP"; then
         attempt=0

@@ -130,6 +130,7 @@ impl CodeTable {
         hits.sort_by(order);
         hits.into_iter()
             .map(|entry| Match {
+                reading_total: 0,
                 text: entry.text.as_str(),
                 pinyin: entry.code.as_str(),
                 frequency: entry.frequency,

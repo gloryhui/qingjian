@@ -261,6 +261,7 @@ impl Engine {
                     scored.push(Scored {
                         // 对整个输入来说它不是精确命中，只是覆盖了前面一部分
                         hit: Match {
+                            reading_total: 0,
                             exact: false,
                             ..hit
                         },
@@ -296,7 +297,7 @@ impl Engine {
                 self.chain.context(),
                 hit.text,
                 sentence::fallback_log_prob(hit.frequency, log_total),
-            );
+            ) - sentence::reading_cost(hit);
             (choice, log_prob)
         });
         // 辅码态：词库候选按码段**反向**过滤（逐个问「有没有以码段开头的码」），无码词直接隐藏；

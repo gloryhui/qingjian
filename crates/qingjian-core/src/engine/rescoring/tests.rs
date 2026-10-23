@@ -1,7 +1,8 @@
 use std::time::{Duration, Instant};
 
 use super::*;
-use crate::sentence::SentenceWord;
+use crate::sentence::{SentenceScorer, SentenceWord};
+use qingjian_dictionary::Dictionary;
 
 /// 假打分器：偏爱某个文本，其余都给低分。
 struct Prefers(&'static str);
@@ -124,4 +125,54 @@ fn the_shell_context_wins_over_session_history() {
     assert_eq!(engine.rescoring_context(), "前的文本");
     engine.set_rescoring_context(None);
     assert_eq!(engine.rescoring_context(), "屏的历史");
+}
+
+/// 用通道控制两次任务的完成次序，确保旧请求不会结束新一轮轮询。
+#[test]
+fn an_earlier_result_does_not_end_the_latest_round() {
+    use std::sync::{Mutex, mpsc};
+    struct Gated {
+        release: Mutex<mpsc::Receiver<()>>,
+        started: mpsc::Sender<()>,
+    }
+    impl SentenceScorer for Gated {
+        fn score(&self, _context: &str, texts: &[&str]) -> Vec<f64> {
+            self.started.send(()).unwrap();
+            self.release
+                .lock()
+                .unwrap()
+                .recv_timeout(Duration::from_secs(5))
+                .unwrap();
+            vec![-1.0; texts.len()]
+        }
+    }
+    let (release, release_rx) = mpsc::channel();
+    let (started_tx, started) = mpsc::channel();
+    let mut engine = engine().with_async_sentence_scorer(
+        Box::new(Gated {
+            release: Mutex::new(release_rx),
+            started: started_tx,
+        }),
+        Some(0.5),
+        None,
+        None,
+    );
+    let mut earlier = vec![path("开饭", -10.0), path("开放", -11.0)];
+    engine.rescore_paths(&mut earlier);
+    assert!(engine.request_rescoring());
+    started.recv_timeout(Duration::from_secs(5)).unwrap();
+    let mut latest = vec![path("开花", -10.0), path("开会", -11.0)];
+    engine.rescore_paths(&mut latest);
+    assert!(engine.request_rescoring());
+    release.send(()).unwrap();
+    started.recv_timeout(Duration::from_secs(5)).unwrap();
+    assert!(!engine.poll_rescoring());
+    release.send(()).unwrap();
+    let began = Instant::now();
+    while !engine.poll_rescoring() {
+        assert!(began.elapsed() < Duration::from_secs(5));
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    engine.rescore_paths(&mut latest);
+    assert!(!engine.rescoring_pending());
 }

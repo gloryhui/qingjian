@@ -35,7 +35,7 @@ fn learned_combination_can_still_beat_a_complete_word() {
         .record_times(sentence::Context::after("和"), "并", 15);
     // 用户明确选过整串「和并」（整句上屏 / 分次选完都会记下这条）：这是越过完整词
     // 的唯一放行证据（Issue #16）。n-gram 只负责把整句路径的分抬起来，不放行。
-    learner.record_choice("hebing", "和并");
+    learner.record_choice("hebing", "", "和并");
     let mut engine = Engine::new(dictionary).with_learner(Box::new(learner));
     engine.set_input("hebing");
     let query = engine.query().unwrap();

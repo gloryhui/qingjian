@@ -12,7 +12,8 @@ mod worker;
 #[cfg(test)]
 mod tests;
 
-use super::*;
+use super::{Engine, take_last_chars};
+use crate::sentence::Conversion;
 use std::collections::HashSet;
 
 pub(crate) use cache::NeuralCache;
@@ -136,11 +137,12 @@ impl Engine {
         true
     }
 
-    /// 收后台打好的分。有新分进了缓存返回 `true`，壳该重新 [`Self::query`] 一次；前文已经变了的结果丢掉。
+    /// 收后台打好的分，只有最新请求的有效结果才结束本轮；较早结果仍可进入缓存。
     pub fn poll_rescoring(&mut self) -> bool {
         let Some(worker) = &self.rescorer else {
             return false;
         };
+        let latest = worker.latest();
         let mut updated = false;
         while let Some(scored) = worker.poll() {
             let mut cache = self.neural_cache.borrow_mut();
@@ -150,7 +152,7 @@ impl Engine {
             for (text, score) in scored.texts.iter().zip(scored.scores) {
                 cache.insert(text, score);
             }
-            updated = true;
+            updated |= scored.serial == latest;
         }
         updated
     }

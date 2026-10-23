@@ -321,7 +321,7 @@ impl Engine {
             chars: traditional_text.chars().count(),
             input,
             chosen: None,
-            sentence_choice: None,
+            choice: None,
             transitions: std::mem::take(&mut self.recording),
             typos: Vec::new(),
             erased: 0,

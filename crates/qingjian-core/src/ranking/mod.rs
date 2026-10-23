@@ -83,6 +83,7 @@ mod tests {
 
     fn hit<'a>(text: &'a str, pinyin: &'a str, frequency: u32, exact: bool) -> Match<'a> {
         Match {
+            reading_total: 0,
             text,
             pinyin,
             frequency,

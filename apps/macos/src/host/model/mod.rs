@@ -11,7 +11,9 @@ mod rescore_monitor;
 
 pub(super) use rescore_monitor::RescoreMonitor;
 
-use super::*;
+use super::Host;
+use crate::app::paths;
+use crate::candidates::Preedit;
 
 impl Host {
     /// 在后台线程加载模型并预热（第一次前向要编译 Metal 内核，几百毫秒），加载完由 [`Self::attach_loaded_model`] 接上。
@@ -157,5 +159,7 @@ impl Host {
             self.session.layout.set_cloud(cloud);
         }
         self.render();
+        // 结果到达时可能又有新按键，重查收集到的缺分路径仍需下一轮请求。
+        self.schedule_rescoring();
     }
 }

@@ -343,7 +343,7 @@ fn convert_path_groups_inner(
                         text: hit.text.clone(),
                         route,
                         syllables: hit.syllables.clone(),
-                        score: score + bonus - hit.penalty,
+                        score: score + bonus - hit.penalty - hit.reading,
                         static_score,
                         fallback_score,
                         personal_delta,
@@ -558,6 +558,7 @@ pub(crate) fn span_candidates(
             text: hit.text.to_owned(),
             syllables: hit.syllables().map(str::to_owned).collect(),
             frequency: hit.frequency,
+            reading: super::reading_cost(&hit),
             penalty,
         })
         .collect()
