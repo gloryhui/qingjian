@@ -62,7 +62,7 @@ impl Engine {
                     self.shuangpin.is_some() || self.zhuyin,
                     self.shuangpin.is_some() && self.shuangpin_raw_preedit,
                     self.composition.scope(),
-                    self.marked_rest(self.composition.rest()),
+                    self.marked_composition_rest(),
                 )
             }
         };
@@ -115,7 +115,7 @@ impl Engine {
     pub(super) fn query_inner(&self) -> Result<Query, ParseError> {
         let start = Instant::now();
         let keys = self.composition.scope();
-        let rest = self.marked_rest(self.composition.rest());
+        let rest = self.marked_composition_rest();
         if self.english_mode {
             return Ok(self.query_english(keys, rest, start));
         }
@@ -190,7 +190,11 @@ impl Engine {
                     rest,
                     decoded_keys: self.shuangpin.is_some() || self.zhuyin,
                     shuangpin_raw_preedit: self.shuangpin.is_some() && self.shuangpin_raw_preedit,
-                    typed_display: decoded.as_ref().map(|d| d.marked()),
+                    typed_display: decoded.as_ref().map(|d| d.marked()).or_else(|| {
+                        self.composition
+                            .has_shifted()
+                            .then(|| self.composition.typed_scope())
+                    }),
                     correction: None,
                     aux: None,
                     timings: Timings {

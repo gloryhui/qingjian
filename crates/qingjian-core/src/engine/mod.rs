@@ -534,8 +534,15 @@ fn marked_rest(rest: &str) -> String {
     if rest.is_empty() {
         return String::new();
     }
-    match segment_longest_prefix(rest) {
-        Ok((segmentations, tail)) => query::join_marked(&segmentations, tail),
+    let lowercase;
+    let matching = if rest.bytes().any(|b| b.is_ascii_uppercase()) {
+        lowercase = rest.to_ascii_lowercase();
+        lowercase.as_str()
+    } else {
+        rest
+    };
+    match segment_longest_prefix(matching) {
+        Ok((segmentations, tail)) => query::join_marked_typed(rest, &segmentations, tail),
         Err(_) => rest.to_owned(),
     }
 }

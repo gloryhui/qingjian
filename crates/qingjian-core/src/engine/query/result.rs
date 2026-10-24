@@ -1,3 +1,5 @@
+//! 候选查询帧与保留输入大小写的预编辑分段、光标映射。
+
 use crate::candidate::CandidateList;
 use crate::correction::Correction;
 use crate::parser::Segmentation;
@@ -27,6 +29,8 @@ pub(crate) fn join_marked_typed(typed: &str, segmentations: &[Segmentation], tai
             if index > 0 {
                 text.push('\'');
             }
+            // 显式分隔符不属于音节长度，取原样字母前先跳过它们。
+            offset += typed[offset..].bytes().take_while(|b| *b == b'\'').count();
             let end = (offset + syllable.text.len()).min(typed.len());
             text.push_str(&typed[offset..end]);
             offset = end;
@@ -36,7 +40,7 @@ pub(crate) fn join_marked_typed(typed: &str, segmentations: &[Segmentation], tai
         if !text.is_empty() {
             text.push('\'');
         }
-        text.push_str(&typed[offset.min(typed.len())..]);
+        text.push_str(typed[offset..].trim_start_matches('\''));
     }
     text
 }

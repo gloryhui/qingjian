@@ -12,6 +12,7 @@ mod joint;
 mod learning;
 mod lookup;
 mod polyphone;
+mod preedit;
 mod privacy;
 mod raw;
 mod selection;

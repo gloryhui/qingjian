@@ -211,6 +211,15 @@ impl Engine {
 
     /// 光标后剩余拼音的显示形式：双拼先解码；能切就按音节用 `'` 连上，切不动就原样。
     /// 只用形码时剩余段是编码，原样显示。
+    pub(super) fn marked_composition_rest(&self) -> String {
+        // 双拼与注音显示解码后的读音，仍需使用匹配用的键串。
+        if !self.composition.has_shifted() || self.shuangpin.is_some() || self.zhuyin {
+            return self.marked_rest(self.composition.rest());
+        }
+        self.marked_rest(&self.composition.typed_text()[self.composition.scope().len()..])
+    }
+
+    /// 显示一段拼音或方案按键，不包含当前组句的大小写还原。
     pub(super) fn marked_rest(&self, rest: &str) -> String {
         if self.code_only() || (self.shuangpin.is_some() && self.shuangpin_raw_preedit) {
             return rest.to_owned();

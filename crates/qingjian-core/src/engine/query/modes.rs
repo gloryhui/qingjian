@@ -26,12 +26,12 @@ impl Engine {
             segmentations: Vec::new(),
             candidates: CandidateList { items },
             tail: scope.to_owned(),
-            text: self.composition.text().to_owned(),
+            text: self.composition.typed_text(),
             cursor: self.composition.cursor(),
             rest,
             decoded_keys: self.shuangpin.is_some() || self.zhuyin,
             shuangpin_raw_preedit: false,
-            typed_display: None,
+            typed_display: Some(self.composition.typed_scope()),
             correction: None,
             aux: None,
             timings: Timings {
@@ -45,7 +45,7 @@ impl Engine {
     /// 英文直输段：唯一候选就是原文（`no-way`），空格 / 回车都上屏它；preedit 原样显示。
     pub(super) fn query_raw(&self, scope: &str, rest: String, start: Instant) -> Query {
         let items = vec![Candidate {
-            text: scope.to_owned(),
+            text: self.composition.typed_scope(),
             kind: CandidateKind::English,
             syllables: Vec::new(),
             reading: None,
@@ -57,12 +57,12 @@ impl Engine {
             segmentations: Vec::new(),
             candidates: CandidateList { items },
             tail: scope.to_owned(),
-            text: self.composition.text().to_owned(),
+            text: self.composition.typed_text(),
             cursor: self.composition.cursor(),
             rest,
             decoded_keys: self.shuangpin.is_some() || self.zhuyin,
             shuangpin_raw_preedit: false,
-            typed_display: None,
+            typed_display: Some(self.composition.typed_scope()),
             correction: None,
             aux: None,
             timings: Timings {
@@ -99,7 +99,7 @@ impl Engine {
             segmentations: Vec::new(),
             candidates: CandidateList { items },
             tail: scope.to_owned(),
-            text: self.composition.text().to_owned(),
+            text: self.composition.typed_text(),
             cursor: self.composition.cursor(),
             rest,
             decoded_keys: self.shuangpin.is_some() || self.zhuyin,
@@ -119,7 +119,9 @@ impl Engine {
     /// 十六进制码点（`u4e00`、`u+1f600`）本地直接给出那个字符。
     pub(super) fn query_question(&self, scope: &str, rest: String, start: Instant) -> Query {
         let body = self.modes().question_body(scope, self.zhuyin);
-        let prefix = &scope[..scope.len() - body.len()];
+        let typed = self.composition.typed_scope();
+        let prefix_len = scope.len() - body.len();
+        let prefix = &typed[..prefix_len];
         let (candidates, tail) = match shortcut::unicode_form(body) {
             Some(text) => (
                 CandidateList {
@@ -132,11 +134,11 @@ impl Engine {
                         aux_code: None,
                     }],
                 },
-                scope.to_owned(),
+                typed.clone(),
             ),
             None => (
                 CandidateList::default(),
-                format!("{prefix}{}", self.marked_rest(body)),
+                format!("{prefix}{}", self.marked_rest(&typed[prefix_len..])),
             ),
         };
         Query {
@@ -144,7 +146,7 @@ impl Engine {
             segmentations: Vec::new(),
             candidates,
             tail,
-            text: self.composition.text().to_owned(),
+            text: self.composition.typed_text(),
             cursor: self.composition.cursor(),
             rest,
             decoded_keys: self.shuangpin.is_some() || self.zhuyin,
